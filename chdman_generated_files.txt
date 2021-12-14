@@ -1,0 +1,9 @@
+build/generated/version.cpp
+build/linux_gcc/bin/x64/Release/libutils.a
+build/linux_gcc/bin/x64/Release/libzlib.a
+build/linux_gcc/bin/x64/Release/mame_mame/libocore_sdl.a
+build/linux_gcc/bin/x64/Release/libutf8proc.a
+build/linux_gcc/bin/x64/Release/lib7z.a
+build/linux_gcc/bin/x64/Release/libexpat.a
+build/linux_gcc/bin/x64/Release/libflac.a
+build/projects/sdl/mame/gmake-linux/chdman.make

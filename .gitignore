@@ -1,0 +1,49 @@
+#quack
+# osx annoyances
+.DS_Store
+
+# binaries folder
+/bin/
+/Build/
+/build/
+/build-*/
+
+# vs stuff
+.vs
+ipch
+ipch/*
+*.opensdf
+*.sdf
+*.suo
+*.vcxproj.user
+*.VC.opendb
+*.VC.db
+/.vscode/
+
+# cmake stuff
+CMakeCache.txt
+CMakeFiles
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# unix intermediate files
+config.h
+*.o
+*.a
+*.so
+*.dylib
+
+# qt creator
+CMakeLists.txt.user
+
+# python bytecode
+__pycache__
+
+# other repos
+/dep/mac
+/android
+
+# UWP crap
+Generated Files
+/packages
