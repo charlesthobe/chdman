@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.18)
 project("chdman CBT edition")
 #compiler flags are "CMAKE_C_FLAGS" and "CMAKE_CXX_FLAGS"
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_C_FLAGS_DEBUG "-g")
+set(CMAKE_C_FLAGS_RELEASE "-O3")
+
 add_subdirectory(cmake_subdirs)
 
 #chdman
