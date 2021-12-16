@@ -1,7 +1,4 @@
 #quack
-# osx annoyances
-.DS_Store
-
 # binaries folder
 /bin/
 /Build/
@@ -34,16 +31,3 @@ config.h
 *.so
 *.dylib
 
-# qt creator
-CMakeLists.txt.user
-
-# python bytecode
-__pycache__
-
-# other repos
-/dep/mac
-/android
-
-# UWP crap
-Generated Files
-/packages
