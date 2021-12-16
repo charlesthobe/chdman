@@ -21,4 +21,4 @@ set_property(TARGET chdman PROPERTY CXX_STANDARD 17)
 #target_link_libraries(ocore_sdl PRIVATE SDL2)
 
 target_link_libraries(chdman PRIVATE utils expat 7z ocore_sdl zlib flac utf8proc
-dl rt SDL2 m pthread util)
+dl rt m pthread util)
