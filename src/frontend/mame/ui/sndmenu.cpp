@@ -45,25 +45,29 @@ menu_sound_options::menu_sound_options(mame_ui_manager &mui, render_container &c
 }
 
 //-------------------------------------------------
-//  menu_dismissed
+//  dtor
 //-------------------------------------------------
 
-void menu_sound_options::menu_dismissed()
+menu_sound_options::~menu_sound_options()
 {
 	emu_options &moptions = machine().options();
 
-	if (strcmp(moptions.value(OSDOPTION_SOUND), m_sound ? OSDOPTVAL_AUTO : OSDOPTVAL_NONE))
+	if (strcmp(moptions.value(OSDOPTION_SOUND), m_sound ? OSDOPTVAL_AUTO : OSDOPTVAL_NONE) != 0)
+	{
 		moptions.set_value(OSDOPTION_SOUND, m_sound ? OSDOPTVAL_AUTO : OSDOPTVAL_NONE, OPTION_PRIORITY_CMDLINE);
-
+	}
 	if (moptions.bool_value(OPTION_COMPRESSOR) != m_compressor)
+	{
 		moptions.set_value(OPTION_COMPRESSOR, m_compressor, OPTION_PRIORITY_CMDLINE);
-
+	}
 	if (moptions.int_value(OPTION_SAMPLERATE) != m_sound_rate[m_cur_rates])
+	{
 		moptions.set_value(OPTION_SAMPLERATE, m_sound_rate[m_cur_rates], OPTION_PRIORITY_CMDLINE);
-
+	}
 	if (moptions.bool_value(OPTION_SAMPLES) != m_samples)
+	{
 		moptions.set_value(OPTION_SAMPLES, m_samples, OPTION_PRIORITY_CMDLINE);
-
+	}
 }
 
 //-------------------------------------------------

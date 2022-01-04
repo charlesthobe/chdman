@@ -146,6 +146,7 @@ private:
 	class led16seg_component;
 	class led14segsc_component;
 	class led16segsc_component;
+	class dotmatrix_component;
 	class simplecounter_component;
 	class reel_component;
 

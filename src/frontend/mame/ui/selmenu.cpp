@@ -2768,7 +2768,7 @@ void menu_select_launch::infos_render(float origx1, float origy1, float origx2, 
 			}
 			else
 			{
-				m_info_buffer.clear();
+				m_info_buffer = "";
 				mame_machine_manager::instance()->lua()->call_plugin("data", m_info_view - 1, m_info_buffer);
 			}
 		}
@@ -3057,9 +3057,9 @@ void menu_select_launch::general_info(ui_system_info const *system, game_driver 
 
 		// if everything looks good, schedule the new driver
 		if (audit_passed(summary))
-			str << _("Media Audit Result\tOK\n");
+			str << _("ROM Audit Result\tOK\n");
 		else
-			str << _("Media Audit Result\tBAD\n");
+			str << _("ROM Audit Result\tBAD\n");
 
 		if (summary_samples == media_auditor::NONE_NEEDED)
 			str << _("Samples Audit Result\tNone Needed\n");
@@ -3070,10 +3070,10 @@ void menu_select_launch::general_info(ui_system_info const *system, game_driver 
 	}
 	else
 	{
-		str << _("Media Audit\tDisabled\nSamples Audit\tDisabled\n");
+		str << _("ROM Audit \tDisabled\nSamples Audit \tDisabled\n");
 	}
 
-	buffer = std::move(str).str();
+	buffer = str.str();
 }
 
 } // namespace ui

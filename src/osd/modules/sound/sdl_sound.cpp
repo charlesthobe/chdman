@@ -335,6 +335,7 @@ int sound_sdl::init(const osd_options &options)
 	int         n_channels = 2;
 	int         audio_latency;
 	SDL_AudioSpec   aspec, obtained;
+	char audio_driver[16] = "";
 
 	if (LOG_SOUND)
 		sound_log = std::make_unique<std::ofstream>(SDLMAME_SOUND_LOG);
@@ -349,8 +350,8 @@ int sound_sdl::init(const osd_options &options)
 		}
 
 		osd_printf_verbose("Audio: Start initialization\n");
-		char const *const audio_driver = SDL_GetCurrentAudioDriver();
-		osd_printf_verbose("Audio: Driver is %s\n", audio_driver ? audio_driver : "not initialized");
+		strncpy(audio_driver, SDL_GetCurrentAudioDriver(), sizeof(audio_driver));
+		osd_printf_verbose("Audio: Driver is %s\n", audio_driver);
 
 		sdl_xfer_samples = SDL_XFER_SAMPLES;
 		stream_in_initialized = 0;

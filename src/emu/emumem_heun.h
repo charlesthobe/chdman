@@ -14,11 +14,10 @@ template<int Width, int AddrShift> class handler_entry_read_unmapped : public ha
 public:
 	using uX = typename emu::detail::handler_entry_size<Width>::uX;
 
-	handler_entry_read_unmapped(address_space *space, u16 flags) : handler_entry_read<Width, AddrShift>(space, handler_entry::F_UNMAP | flags) {}
+	handler_entry_read_unmapped(address_space *space) : handler_entry_read<Width, AddrShift>(space, handler_entry::F_UNMAP) {}
 	~handler_entry_read_unmapped() = default;
 
 	uX read(offs_t offset, uX mem_mask) const override;
-	std::pair<uX, u16> read_flags(offs_t offset, uX mem_mask) const override;
 
 	std::string name() const override;
 };
@@ -28,11 +27,10 @@ template<int Width, int AddrShift> class handler_entry_write_unmapped : public h
 public:
 	using uX = typename emu::detail::handler_entry_size<Width>::uX;
 
-	handler_entry_write_unmapped(address_space *space, u16 flags) : handler_entry_write<Width, AddrShift>(space, handler_entry::F_UNMAP | flags) {}
+	handler_entry_write_unmapped(address_space *space) : handler_entry_write<Width, AddrShift>(space, handler_entry::F_UNMAP) {}
 	~handler_entry_write_unmapped() = default;
 
 	void write(offs_t offset, uX data, uX mem_mask) const override;
-	u16 write_flags(offs_t offset, uX data, uX mem_mask) const override;
 
 	std::string name() const override;
 };
@@ -48,11 +46,10 @@ template<int Width, int AddrShift> class handler_entry_read_nop : public handler
 public:
 	using uX = typename emu::detail::handler_entry_size<Width>::uX;
 
-	handler_entry_read_nop(address_space *space, u16 flags) : handler_entry_read<Width, AddrShift>(space, flags) {}
+	handler_entry_read_nop(address_space *space) : handler_entry_read<Width, AddrShift>(space, 0) {}
 	~handler_entry_read_nop() = default;
 
 	uX read(offs_t offset, uX mem_mask) const override;
-	std::pair<uX, u16> read_flags(offs_t offset, uX mem_mask) const override;
 
 	std::string name() const override;
 };
@@ -62,11 +59,10 @@ template<int Width, int AddrShift> class handler_entry_write_nop : public handle
 public:
 	using uX = typename emu::detail::handler_entry_size<Width>::uX;
 
-	handler_entry_write_nop(address_space *space, u16 flags) : handler_entry_write<Width, AddrShift>(space, flags) {}
+	handler_entry_write_nop(address_space *space) : handler_entry_write<Width, AddrShift>(space, 0) {}
 	~handler_entry_write_nop() = default;
 
 	void write(offs_t offset, uX data, uX mem_mask) const override;
-	u16 write_flags(offs_t offset, uX data, uX mem_mask) const override;
 
 	std::string name() const override;
 };
