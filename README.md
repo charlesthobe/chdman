@@ -16,3 +16,5 @@ cmake -G Ninja .. && ninja
 ```
 
 the `chdman` binary will be in the build directory.
+
+Note: You can copy the "CMakeLists.txt" and "src/osd/modules/lib/osd_getenv.cpp" over the MAME source tree and it will build.
