@@ -1,3 +1,0 @@
-[1/3] Building CXX object cmake_subdirs/ocore_sdl/CMakeFiles/ocore_sdl.dir/__/__/src/osd/modules/lib/osdlib_unix_mod.cpp.o
-[2/3] Linking CXX static library cmake_subdirs/ocore_sdl/libocore_sdl.a
-[3/3] Linking CXX executable chdman
