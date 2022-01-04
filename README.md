@@ -3,7 +3,7 @@ can be built on termux
 
 ### installing building tools.
 ```
-apt update
+apt update && apt dist-upgrade -y
 apt install build-essential git ninja
 ```
 
