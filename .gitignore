@@ -1,9 +1,10 @@
 #quack
-# binaries folder
+# binaries ~~folder~~
 /bin/
 /Build/
 /build/
 /build-*/
+chdman
 
 # vs stuff
 .vs
@@ -23,6 +24,8 @@ CMakeFiles
 Makefile
 cmake_install.cmake
 install_manifest.txt
+.ninja_*
+build.ninja
 
 # unix intermediate files
 config.h
