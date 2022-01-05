@@ -38,7 +38,7 @@ add_compile_definitions(
 )
 endif()
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
 add_compile_definitions(
     HAVE_DLFCN_H
     HAVE_FCNTL_H
