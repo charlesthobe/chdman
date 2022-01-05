@@ -1,5 +1,4 @@
 #ocore_sdl
-set(CMAKE_CXX_STANDARD 17)
 include_directories(
 ${CMAKE_SOURCE_DIR}/src/emu
 ${CMAKE_SOURCE_DIR}/src/osd
@@ -18,13 +17,29 @@ ${CMAKE_SOURCE_DIR}/src/osd/osdsync.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/osdsync.h
 ${CMAKE_SOURCE_DIR}/src/osd/modules/osdmodule.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/modules/osdmodule.h
-#${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osdlib_unix.cpp
-${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osd_getenv.cpp
+${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osd_getenv.cpp #instead of osdlib_${target_os}.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osdlib.h
-${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixdir.cpp
-${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixfile.cpp
-${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixfile.h
-${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixptty.cpp
-${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixsocket.cpp
-#${CMAKE_SOURCE_DIR}/src/osd/modules/file/stdfile.cpp
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+target_sources(ocore_sdl PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixdir.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixfile.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixfile.h
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixptty.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixsocket.cpp
+)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+target_sources(ocore_sdl PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/windir.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winfile.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winfile.h
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winptty.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winsocket.cpp
+    ${CMAKE_SOURCE_DIR}/src/osd/windows/winutil.cpp
+)
+else()
+target_sources(ocore_sdl PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/osd/modules/file/stdfile.cpp
+)
+endif()
