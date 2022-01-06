@@ -30,6 +30,9 @@ target_sources(ocore_sdl PRIVATE
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixsocket.cpp
 )
 elseif(WIN32)
+include_directories(
+    ${CMAKE_SOURCE_DIR}/src/osd/windows
+)
 target_sources(ocore_sdl PRIVATE
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/windir.cpp
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winfile.cpp
