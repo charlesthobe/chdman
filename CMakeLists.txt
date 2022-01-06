@@ -15,6 +15,7 @@ if(WIN32)
 add_compile_definitions(
   X64_WINDOWS_ABI
   CRLF=3
+  OSD_WINDOWS
 )
 else()
 add_compile_definitions(
@@ -57,6 +58,7 @@ target_link_libraries(chdman PRIVATE utils expat 7z ocore_sdl zlib flac utf8proc
 if(UNIX)
 target_link_libraries(chdman PRIVATE pthread util)
 elseif(WIN32)
+target_link_libraries(chdman PRIVATE utils) #circular dependency bs Windows only.
 target_link_libraries(chdman PRIVATE
   user32
   winmm
