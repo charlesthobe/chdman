@@ -1,7 +1,7 @@
 #zlib
 set(zlib_dir ${CMAKE_SOURCE_DIR}/3rdparty/zlib)
 
-if(CMAKE_C_COMPILER_ID STREQUAL "Clang") #fixme: or android
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shift-negative-value")
 endif()
 

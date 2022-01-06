@@ -14,7 +14,7 @@ if(${CMAKE_GENERATOR} STREQUAL "Unix Makefiles" OR ${CMAKE_GENERATOR} STREQUAL "
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-function -O0")
 endif()
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang") #fixme: or android
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-enum-conversion")
 endif()
 

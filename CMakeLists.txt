@@ -53,4 +53,4 @@ target_compile_definitions(chdman PRIVATE
 )
 
 target_link_libraries(chdman PRIVATE utils expat 7z ocore_sdl zlib flac utf8proc
-dl rt m pthread util)
+dl m pthread util)
