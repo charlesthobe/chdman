@@ -1,0 +1,52 @@
+name: CI (Windows)
+
+on:
+#  push:
+#    paths:
+#    - '.github/**'
+#    - '3rdparty/**'
+#    - 'hash/**'
+#    - 'scripts/**'
+#    - 'src/**'
+#    - 'CMakeLists.txt'
+#    - 'cmake_subdirs/**'
+#  pull_request:
+#    paths:
+#    - '.github/**'
+#    - '3rdparty/**'
+#    - 'hash/**'
+#    - 'scripts/**'
+#    - 'src/**'
+#    - 'CMakeLists.txt'
+#    - 'cmake_subdirs/**'
+  workflow_dispatch:
+
+jobs:
+
+  build-windows-gcc:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - uses: msys2/setup-msys2@v2
+      with:
+        install: git make mingw-w64-x86_64-gcc mingw-w64-x86_64-python mingw-w64-x86_64-lld mingw-w64-x86_64-libc++ mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+    - uses: actions/checkout@master
+    - name: Build
+      env:
+        MINGW64: "/mingw64"
+        ARCHOPTS: "-fuse-ld=lld"
+        OVERRIDE_AR: "llvm-ar"
+      run: |
+         cmake -G Ninja
+         ninja
+    - name: 'Get Previous tag'
+      id: previoustag
+      uses: "WyriHaximus/github-action-get-previous-tag@v1"
+      with:
+        fallback: test
+    - uses: actions/upload-artifact@master
+      with:
+        name: chdman-windows_x64-${{ steps.previoustag.outputs.tag }}
+        path: chdman.exe
