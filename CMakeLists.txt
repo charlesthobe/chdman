@@ -72,3 +72,16 @@ target_link_libraries(chdman PRIVATE
   userenv
 )
 endif()
+
+if(MINGW)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+elseif(MSVC)
+add_compile_definitions(
+  XML_STATIC
+  WIN32
+  _WIN32
+  _CRT_NONSTDC_NO_DEPRECATE
+  _CRT_SECURE_NO_DEPRECATE
+  _CRT_STDIO_LEGACY_WIDE_SPECIFIERS
+)
+endif()
