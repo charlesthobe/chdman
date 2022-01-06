@@ -21,7 +21,7 @@ ${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osd_getenv.cpp #instead of osdlib_${targ
 ${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osdlib.h
 )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
+if(UNIX)
 target_sources(ocore_sdl PRIVATE
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixdir.cpp
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixfile.cpp
@@ -29,7 +29,7 @@ target_sources(ocore_sdl PRIVATE
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixptty.cpp
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/posixsocket.cpp
 )
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+elseif(WIN32)
 target_sources(ocore_sdl PRIVATE
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/windir.cpp
     ${CMAKE_SOURCE_DIR}/src/osd/modules/file/winfile.cpp

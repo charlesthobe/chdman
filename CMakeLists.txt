@@ -11,7 +11,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17) #needed by libocore and libutils. -
 #set globally to match MAME's genie scripts.
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+if(WIN32)
 add_compile_definitions(
   X64_WINDOWS_ABI
   CRLF=3
