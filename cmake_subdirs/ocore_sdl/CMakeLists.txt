@@ -1,4 +1,16 @@
 #ocore_sdl
+
+#dofile("sdl_cfg.lua")
+if(WIN32)
+add_compile_definitions(
+    UNICODE
+    _UNICODE
+    _WIN32_WINNT=0x0501
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+endif()
+
 include_directories(
 ${CMAKE_SOURCE_DIR}/src/emu
 ${CMAKE_SOURCE_DIR}/src/osd
