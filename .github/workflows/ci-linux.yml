@@ -25,7 +25,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v2
       - name: Install dependencies
         run: |
           sudo apt update
@@ -39,7 +39,7 @@ jobs:
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
         with:
          fallback: test
-      - uses: actions/upload-artifact@master
+      - uses: actions/upload-artifact@v2
         with:
           name: chdman-linux-${{ steps.previoustag.outputs.tag }}
           path: chdman

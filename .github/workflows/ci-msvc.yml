@@ -23,7 +23,13 @@ on:
 
 jobs:
 
-  build-windows-gcc:
+  build-windows-msvc:
+    strategy:
+      matrix:
+        os: [windows-latest]
+        platform: [Win32, x64]
+        configuration: [Release, Release AVX2, CMake]
+        experimental: [false]
     runs-on: windows-latest
     defaults:
       run:
