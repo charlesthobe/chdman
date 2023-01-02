@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.12)
 project("chdman CBT edition")
 set(build_version "0.238-CBT_edition")
 set(vcs_revision "mame0238")
