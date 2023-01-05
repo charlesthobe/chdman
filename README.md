@@ -1,26 +1,40 @@
 # chdman standalone
-can be built on termux
 
-### Installing building tools.
+Can be built on [Termux](https://termux.dev/).
+
+## Compilation
+
+### Install dependencies
+
 ```
 apt update && apt dist-upgrade -y
-apt install build-essential git ninja
+apt install build-essential git cmake ninja
 ```
 
-### Building
+> **Note**
+>
+> On Debian/Ubuntu, the Ninja package is called `ninja-build` instead of `ninja`.
+
+### Build chdman
+
 ```
 git clone https://github.com/CharlesThobe/chdman.git
 cd chdman
-mkdir build && cd build
-cmake -G Ninja .. && ninja
+cmake -B build -G Ninja
+cmake --build build
 ```
 
-the `chdman` binary will be in the build directory.
+The `chdman` binary will be in the `build/` directory.
 
-### Installing on termux
-after you compile run:
+### Install on Termux
+
+After you compile, run:
 ```
 cp chdman ~/../usr/bin/.
 ```
 
-Note: You can copy `CMakeLists.txt`, `cmake_subdirs/`, `src/version.cpp` and `src/osd/modules/lib/osd_getenv.cpp` over the MAME source tree and it will build.
+> **Note**
+>
+> You can copy `CMakeLists.txt`, `cmake_subdirs/`, `src/version.cpp` and
+> `src/osd/modules/lib/osd_getenv.cpp` over the MAME source tree and it will
+> build.
