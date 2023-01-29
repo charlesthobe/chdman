@@ -2,6 +2,10 @@
 
 Can be built on [Termux](https://termux.dev/).
 
+This repository is a fork of [MAME](https://github.com/mamedev/mame/)
+
+for real contributors to the chdman utility, please visit their repository.
+
 ## Compilation
 
 ### Install dependencies
