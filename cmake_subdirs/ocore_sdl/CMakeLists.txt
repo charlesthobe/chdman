@@ -11,6 +11,14 @@ add_compile_definitions(
 )
 endif()
 
+#This is not currently useful.
+set(SDLOS_TARGETOS "unix")
+if(WIN32)
+    set(SDLOS_TARGETOS "win32")
+elseif(APPLE)
+    set(SDLOS_TARGETOS "macosx")
+endif()
+
 include_directories(
 ${CMAKE_SOURCE_DIR}/src/emu
 ${CMAKE_SOURCE_DIR}/src/osd
@@ -29,7 +37,7 @@ ${CMAKE_SOURCE_DIR}/src/osd/osdsync.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/osdsync.h
 ${CMAKE_SOURCE_DIR}/src/osd/modules/osdmodule.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/modules/osdmodule.h
-${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osd_getenv.cpp #instead of osdlib_${target_os}.cpp
+${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osd_getenv.cpp #instead of osdlib_${SDLOS_TARGETOS}.cpp
 ${CMAKE_SOURCE_DIR}/src/osd/modules/lib/osdlib.h
 )
 
