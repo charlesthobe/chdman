@@ -34,7 +34,7 @@ The `chdman` binary will be in the `build/` directory.
 
 After you compile, run:
 ```
-cp chdman ~/../usr/bin/.
+cp build/chdman ~/../usr/bin/.
 ```
 
 > **Note**
