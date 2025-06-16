@@ -16,6 +16,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <cstdint>
 
 
 /*-------------------------------------------------
