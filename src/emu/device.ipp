@@ -75,6 +75,11 @@ inline void device_delegate_helper::set_tag(device_finder<DeviceClass, Required>
 
 } // namespace emu::detail
 
+template <typename... T>
+inline emu_timer *device_t::timer_alloc(T &&... args)
+{
+	return machine().scheduler().timer_alloc(timer_expired_delegate(std::forward<T>(args)...));
+}
 
 template <typename Format, typename... Params>
 inline void device_t::popmessage(Format &&fmt, Params &&... args) const
@@ -88,7 +93,7 @@ inline void device_t::logerror(Format &&fmt, Params &&... args) const
 {
 	if (m_machine != nullptr && m_machine->allow_logging())
 	{
-		g_profiler.start(PROFILER_LOGERROR);
+		auto profile = g_profiler.start(PROFILER_LOGERROR);
 
 		// dump to the buffer
 		m_string_buffer.clear();
@@ -98,8 +103,6 @@ inline void device_t::logerror(Format &&fmt, Params &&... args) const
 		m_string_buffer.put('\0');
 
 		m_machine->strlog(&m_string_buffer.vec()[0]);
-
-		g_profiler.stop();
 	}
 }
 

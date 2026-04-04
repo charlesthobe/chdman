@@ -224,7 +224,7 @@ void device_t::add_machine_configuration(machine_config &config)
 	assert(&config == &m_machine_config);
 	machine_config::token const tok(config.begin_configuration(*this));
 	device_add_mconfig(config);
-	for (finder_base *autodev = m_auto_finder_list; autodev != nullptr; autodev = autodev->next())
+	for (auto *autodev = m_auto_finder_list; autodev; autodev = autodev->next())
 		autodev->end_configuration();
 }
 
@@ -321,11 +321,7 @@ void device_t::config_complete()
 
 void device_t::validity_check(validity_checker &valid) const
 {
-	// validate callbacks
-	for (devcb_base const *callback : m_callbacks)
-		callback->validity_check(valid);
-
-	// validate via the interfaces
+	// validate mixins
 	for (device_interface &intf : interfaces())
 		intf.interface_validity_check(valid);
 
@@ -365,14 +361,14 @@ void device_t::reset()
 //  unscaled clock
 //-------------------------------------------------
 
-void device_t::set_unscaled_clock(u32 clock)
+void device_t::set_unscaled_clock(u32 clock, bool sync_on_new_clock_domain)
 {
 	// do nothing if no actual change
 	if (clock == m_unscaled_clock)
 		return;
 
 	m_unscaled_clock = clock;
-	m_clock = m_unscaled_clock * m_clock_scale;
+	m_clock = m_unscaled_clock * m_clock_scale + 0.5;
 	m_attoseconds_per_clock = (m_clock == 0) ? 0 : HZ_TO_ATTOSECONDS(m_clock);
 
 	// recalculate all derived clocks
@@ -381,7 +377,7 @@ void device_t::set_unscaled_clock(u32 clock)
 
 	// if the device has already started, make sure it knows about the new clock
 	if (m_started)
-		notify_clock_changed();
+		notify_clock_changed(sync_on_new_clock_domain);
 }
 
 
@@ -397,7 +393,7 @@ void device_t::set_clock_scale(double clockscale)
 		return;
 
 	m_clock_scale = clockscale;
-	m_clock = m_unscaled_clock * m_clock_scale;
+	m_clock = m_unscaled_clock * m_clock_scale + 0.5;
 	m_attoseconds_per_clock = (m_clock == 0) ? 0 : HZ_TO_ATTOSECONDS(m_clock);
 
 	// recalculate all derived clocks
@@ -460,28 +456,6 @@ u64 device_t::attotime_to_clocks(const attotime &duration) const noexcept
 
 
 //-------------------------------------------------
-//  timer_alloc - allocate a timer for our device
-//  callback
-//-------------------------------------------------
-
-emu_timer *device_t::timer_alloc(device_timer_id id, void *ptr)
-{
-	return machine().scheduler().timer_alloc(*this, id, ptr);
-}
-
-
-//-------------------------------------------------
-//  timer_set - set a temporary timer that will
-//  call our device callback
-//-------------------------------------------------
-
-void device_t::timer_set(const attotime &duration, device_timer_id id, int param, void *ptr)
-{
-	machine().scheduler().timer_set(duration, *this, id, param, ptr);
-}
-
-
-//-------------------------------------------------
 //  set_machine - notify that the machine now
 //  exists
 //-------------------------------------------------
@@ -500,26 +474,10 @@ void device_t::set_machine(running_machine &machine)
 bool device_t::findit(validity_checker *valid) const
 {
 	bool allfound = true;
-	for (finder_base *autodev = m_auto_finder_list; autodev != nullptr; autodev = autodev->next())
+	for (auto *autodev = m_auto_finder_list; autodev; autodev = autodev->next())
 	{
-		if (valid)
-		{
-			// sanity checking
-			char const *const tag = autodev->finder_tag();
-			if (!tag)
-			{
-				osd_printf_error("Finder tag is null!\n");
-				allfound = false;
-				continue;
-			}
-			if (tag[0] == '^' && tag[1] == ':')
-			{
-				osd_printf_error("Malformed finder tag: %s\n", tag);
-				allfound = false;
-				continue;
-			}
-		}
-		allfound &= autodev->findit(valid);
+		if (!autodev->findit(valid))
+			allfound = false;
 	}
 	return allfound;
 }
@@ -586,11 +544,10 @@ void device_t::start()
 	// complain if nothing was registered by the device
 	state_registrations = machine().save().registration_count() - state_registrations;
 	device_execute_interface *exec;
-	device_sound_interface *sound;
-	if (state_registrations == 0 && (interface(exec) || interface(sound)) && type() != SPEAKER)
+	if ((state_registrations == 0) && interface(exec))
 	{
 		logerror("Device did not register any state to save!\n");
-		if ((machine().system().flags & MACHINE_SUPPORTS_SAVE) != 0)
+		if (!(type().emulation_flags() & flags::SAVE_UNSUPPORTED))
 			fatalerror("Device '%s' did not register any state to save!\n", tag());
 	}
 
@@ -609,7 +566,6 @@ void device_t::start()
 	}
 
 	// register our save states
-	save_item(NAME(m_clock));
 	save_item(NAME(m_unscaled_clock));
 	save_item(NAME(m_clock_scale));
 
@@ -688,6 +644,21 @@ void device_t::pre_save()
 
 void device_t::post_load()
 {
+	// recompute clock-related parameters if something changed
+	u32 const scaled_clock = m_unscaled_clock * m_clock_scale + 0.5;
+	if (m_clock != scaled_clock)
+	{
+		m_clock = scaled_clock;
+		m_attoseconds_per_clock = (scaled_clock == 0) ? 0 : HZ_TO_ATTOSECONDS(scaled_clock);
+
+		// recalculate all derived clocks
+		for (device_t &child : subdevices())
+			child.calculate_derived_clock();
+
+		// make sure the device knows about the new clock
+		notify_clock_changed();
+	}
+
 	// notify the interface
 	for (device_interface &intf : interfaces())
 		intf.interface_post_load();
@@ -702,11 +673,11 @@ void device_t::post_load()
 //  that the clock has changed
 //-------------------------------------------------
 
-void device_t::notify_clock_changed()
+void device_t::notify_clock_changed(bool sync_on_new_clock_domain)
 {
 	// first notify interfaces
 	for (device_interface &intf : interfaces())
-		intf.interface_clock_changed();
+		intf.interface_clock_changed(sync_on_new_clock_domain);
 
 	// then notify the device
 	device_clock_changed();
@@ -868,17 +839,6 @@ void device_t::device_debug_setup()
 
 
 //-------------------------------------------------
-//  device_timer - called whenever a device timer
-//  fires
-//-------------------------------------------------
-
-void device_t::device_timer(emu_timer &timer, device_timer_id id, int param, void *ptr)
-{
-	// do nothing by default
-}
-
-
-//-------------------------------------------------
 //  subdevice_slow - perform a slow name lookup,
 //  caching the results
 //-------------------------------------------------
@@ -1025,18 +985,9 @@ void device_t::subdevice_list::remove(device_t &device)
 //  list of stuff to find after we go live
 //-------------------------------------------------
 
-finder_base *device_t::register_auto_finder(finder_base &autodev)
+device_resolver_base *device_t::register_auto_finder(device_resolver_base &autodev)
 {
-	// add to this list
-	finder_base *old = m_auto_finder_list;
-	m_auto_finder_list = &autodev;
-	return old;
-}
-
-
-void device_t::register_callback(devcb_base &callback)
-{
-	m_callbacks.emplace_back(&callback);
+	return std::exchange(m_auto_finder_list, &autodev);
 }
 
 
@@ -1188,7 +1139,7 @@ void device_interface::interface_post_load()
 //  implementation
 //-------------------------------------------------
 
-void device_interface::interface_clock_changed()
+void device_interface::interface_clock_changed(bool sync_on_new_clock_domain)
 {
 	// do nothing by default
 }

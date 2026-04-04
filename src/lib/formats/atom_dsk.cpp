@@ -6,17 +6,17 @@ atom_format::atom_format() : wd177x_format(formats)
 {
 }
 
-const char *atom_format::name() const
+const char *atom_format::name() const noexcept
 {
 	return "atom";
 }
 
-const char *atom_format::description() const
+const char *atom_format::description() const noexcept
 {
 	return "Acorn Atom disk image";
 }
 
-const char *atom_format::extensions() const
+const char *atom_format::extensions() const noexcept
 {
 	return "40t,dsk";
 }
@@ -30,4 +30,4 @@ const atom_format::format atom_format::formats[] =
 	{}
 };
 
-const floppy_format_type FLOPPY_ATOM_FORMAT = &floppy_image_format_creator<atom_format>;
+const atom_format FLOPPY_ATOM_FORMAT;

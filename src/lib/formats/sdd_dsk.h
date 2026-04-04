@@ -18,15 +18,15 @@ class sdd_format : public wd177x_format {
 public:
 	sdd_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
-	virtual int get_image_offset(const format &f, int head, int track) override;
+	virtual int get_image_offset(const format &f, int head, int track) const override;
 };
 
-extern const floppy_format_type FLOPPY_SDD_FORMAT;
+extern const sdd_format FLOPPY_SDD_FORMAT;
 
 #endif // MAME_FORMATS_SDD_DSK_H

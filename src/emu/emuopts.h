@@ -100,6 +100,7 @@
 #define OPTION_ARTWORK_CROP         "artwork_crop"
 #define OPTION_FALLBACK_ARTWORK     "fallback_artwork"
 #define OPTION_OVERRIDE_ARTWORK     "override_artwork"
+#define OPTION_ARTWORK_FONT         "artwork_font"
 
 // core screen options
 #define OPTION_BRIGHTNESS           "brightness"
@@ -119,8 +120,6 @@
 #define OPTION_SAMPLERATE           "samplerate"
 #define OPTION_SAMPLES              "samples"
 #define OPTION_VOLUME               "volume"
-#define OPTION_COMPRESSOR           "compressor"
-#define OPTION_SPEAKER_REPORT       "speaker_report"
 
 // core input options
 #define OPTION_COIN_LOCKOUT         "coin_lockout"
@@ -132,10 +131,10 @@
 #define OPTION_MULTIMOUSE           "multimouse"
 #define OPTION_STEADYKEY            "steadykey"
 #define OPTION_UI_ACTIVE            "ui_active"
-#define OPTION_OFFSCREEN_RELOAD     "offscreen_reload"
 #define OPTION_JOYSTICK_MAP         "joystick_map"
 #define OPTION_JOYSTICK_DEADZONE    "joystick_deadzone"
 #define OPTION_JOYSTICK_SATURATION  "joystick_saturation"
+#define OPTION_JOYSTICK_THRESHOLD   "joystick_threshold"
 #define OPTION_NATURAL_KEYBOARD     "natural"
 #define OPTION_JOYSTICK_CONTRADICTORY   "joystick_contradictory"
 #define OPTION_COIN_IMPULSE         "coin_impulse"
@@ -161,6 +160,7 @@
 
 // core misc options
 #define OPTION_DRC                  "drc"
+#define OPTION_DRC_RWX              "drc_rwx"
 #define OPTION_DRC_USE_C            "drc_use_c"
 #define OPTION_DRC_LOG_UML          "drc_log_uml"
 #define OPTION_DRC_LOG_NATIVE       "drc_log_native"
@@ -385,6 +385,7 @@ public:
 	bool artwork_crop() const { return bool_value(OPTION_ARTWORK_CROP); }
 	const char *fallback_artwork() const { return value(OPTION_FALLBACK_ARTWORK); }
 	const char *override_artwork() const { return value(OPTION_OVERRIDE_ARTWORK); }
+	const char *artwork_font() const { return value(OPTION_ARTWORK_FONT); }
 
 	// core screen options
 	float brightness() const { return float_value(OPTION_BRIGHTNESS); }
@@ -404,8 +405,6 @@ public:
 	int sample_rate() const { return int_value(OPTION_SAMPLERATE); }
 	bool samples() const { return bool_value(OPTION_SAMPLES); }
 	int volume() const { return int_value(OPTION_VOLUME); }
-	bool compressor() const { return bool_value(OPTION_COMPRESSOR); }
-	int speaker_report() const { return int_value(OPTION_SPEAKER_REPORT); }
 
 	// core input options
 	bool coin_lockout() const { return bool_value(OPTION_COIN_LOCKOUT); }
@@ -426,9 +425,9 @@ public:
 	const char *joystick_map() const { return value(OPTION_JOYSTICK_MAP); }
 	float joystick_deadzone() const { return float_value(OPTION_JOYSTICK_DEADZONE); }
 	float joystick_saturation() const { return float_value(OPTION_JOYSTICK_SATURATION); }
+	float joystick_threshold() const { return float_value(OPTION_JOYSTICK_THRESHOLD); }
 	bool steadykey() const { return bool_value(OPTION_STEADYKEY); }
 	bool ui_active() const { return bool_value(OPTION_UI_ACTIVE); }
-	bool offscreen_reload() const { return bool_value(OPTION_OFFSCREEN_RELOAD); }
 	bool natural_keyboard() const { return bool_value(OPTION_NATURAL_KEYBOARD); }
 	bool joystick_contradictory() const { return m_joystick_contradictory; }
 	int coin_impulse() const { return m_coin_impulse; }
@@ -444,6 +443,7 @@ public:
 
 	// core misc options
 	bool drc() const { return bool_value(OPTION_DRC); }
+	bool drc_rwx() const { return bool_value(OPTION_DRC_RWX); }
 	bool drc_use_c() const { return bool_value(OPTION_DRC_USE_C); }
 	bool drc_log_uml() const { return bool_value(OPTION_DRC_LOG_UML); }
 	bool drc_log_native() const { return bool_value(OPTION_DRC_LOG_NATIVE); }
@@ -461,7 +461,6 @@ public:
 	const char *comm_remotehost() const { return value(OPTION_COMM_REMOTE_HOST); }
 	const char *comm_remoteport() const { return value(OPTION_COMM_REMOTE_PORT); }
 	bool comm_framesync() const { return bool_value(OPTION_COMM_FRAME_SYNC); }
-
 
 	bool confirm_quit() const { return bool_value(OPTION_CONFIRM_QUIT); }
 	bool ui_mouse() const { return bool_value(OPTION_UI_MOUSE); }
@@ -502,6 +501,7 @@ private:
 	struct software_options
 	{
 		std::unordered_map<std::string, std::string>    slot;
+		std::unordered_map<std::string, std::string>    slot_defaults;
 		std::unordered_map<std::string, std::string>    image;
 	};
 

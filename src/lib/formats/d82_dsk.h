@@ -19,14 +19,14 @@ class d82_format : public d80_format
 public:
 	d82_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 protected:
 	static const format file_formats[];
 };
 
-extern const floppy_format_type FLOPPY_D82_FORMAT;
+extern const d82_format FLOPPY_D82_FORMAT;
 
 #endif // MAME_FORMATS_D82_DSK_H

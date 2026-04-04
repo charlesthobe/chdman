@@ -10,7 +10,11 @@
 
 #include "fsmgr.h"
 
-class fs_unformatted : public filesystem_manager_t {
+class floppy_image;
+
+namespace fs {
+
+class unformatted_image : public manager_t {
 public:
 	enum {
 		FSI_NONE,
@@ -21,10 +25,14 @@ public:
 
 		FSI_525_SSSD,
 		FSI_525_SSDD,
+		FSI_525_SSDD16,
 		FSI_525_SSQD,
+		FSI_525_SSQD16,
 		FSI_525_DSSD,
 		FSI_525_DSDD,
+		FSI_525_DSDD16,
 		FSI_525_DSQD,
+		FSI_525_DSQD16,
 		FSI_525_DSHD,
 
 		FSI_35_SSDD,
@@ -36,14 +44,14 @@ public:
 		FSI_3_SSDD,
 	};
 
-	fs_unformatted() : filesystem_manager_t() {}
+	unformatted_image() : manager_t() {}
 
 	virtual const char *name() const override;
 	virtual const char *description() const override;
 
 	static void format(u32 key, floppy_image *image);
 
-	virtual void enumerate_f(floppy_enumerator &fe, uint32_t form_factor, const std::vector<uint32_t> &variants) const override;
+	virtual void enumerate_f(floppy_enumerator &fe) const override;
 	virtual std::unique_ptr<filesystem_t> mount(fsblk_t &blockdev) const override;
 
 	virtual bool can_format() const override;
@@ -52,6 +60,8 @@ public:
 	virtual bool has_rsrc() const override;
 };
 
-extern const fs_unformatted FS_UNFORMATTED;
+extern const unformatted_image UNFORMATTED;
+
+} // namespace fs
 
 #endif

@@ -14,17 +14,17 @@ nascom_format::nascom_format() : wd177x_format(formats)
 {
 }
 
-const char *nascom_format::name() const
+const char *nascom_format::name() const noexcept
 {
 	return "nascom";
 }
 
-const char *nascom_format::description() const
+const char *nascom_format::description() const noexcept
 {
 	return "Nascom disk image";
 }
 
-const char *nascom_format::extensions() const
+const char *nascom_format::extensions() const noexcept
 {
 	return "dsk";
 }
@@ -50,4 +50,4 @@ const nascom_format::format nascom_format::formats[] =
 	{}
 };
 
-const floppy_format_type FLOPPY_NASCOM_FORMAT = &floppy_image_format_creator<nascom_format>;
+const nascom_format FLOPPY_NASCOM_FORMAT;

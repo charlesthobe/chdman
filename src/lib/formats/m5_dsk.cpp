@@ -2,7 +2,7 @@
 // copyright-holders:Olivier Galibert
 /*********************************************************************
 
-    formats/m5_dsk.c
+    formats/m5_dsk.cpp
 
     sord m5 format
 
@@ -14,17 +14,17 @@ m5_format::m5_format() : upd765_format(formats)
 {
 }
 
-const char *m5_format::name() const
+const char *m5_format::name() const noexcept
 {
 	return "m5";
 }
 
-const char *m5_format::description() const
+const char *m5_format::description() const noexcept
 {
 	return "Sord M5 disk image";
 }
 
-const char *m5_format::extensions() const
+const char *m5_format::extensions() const noexcept
 {
 	return "dsk";
 }
@@ -42,4 +42,4 @@ const m5_format::format m5_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_M5_FORMAT = &floppy_image_format_creator<m5_format>;
+const m5_format FLOPPY_M5_FORMAT;

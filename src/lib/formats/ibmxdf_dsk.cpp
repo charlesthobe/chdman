@@ -2,7 +2,7 @@
 // copyright-holders:Sergey Svishchev
 /*********************************************************************
 
-    formats/ibmxdf_dsk.c
+    formats/ibmxdf_dsk.cpp
 
     IBM Extended Density Format
 
@@ -40,31 +40,31 @@ ibmxdf_format::ibmxdf_format() : wd177x_format(formats)
 {
 }
 
-const char *ibmxdf_format::name() const
+const char *ibmxdf_format::name() const noexcept
 {
 	return "ibmxdf";
 }
 
-const char *ibmxdf_format::description() const
+const char *ibmxdf_format::description() const noexcept
 {
 	return "IBM XDF disk image";
 }
 
-const char *ibmxdf_format::extensions() const
+const char *ibmxdf_format::extensions() const noexcept
 {
 	return "xdf,img";
 }
 
-int ibmxdf_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int ibmxdf_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	int type = find_size(io, form_factor, variants);
 
 	if (type != -1)
-		return 75;
+		return FIFID_SIZE;
 	return 0;
 }
 
-int ibmxdf_format::find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int ibmxdf_format::find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	uint64_t size;
 	if (io.length(size))
@@ -76,12 +76,12 @@ int ibmxdf_format::find_size(util::random_read &io, uint32_t form_factor, const 
 	return 0;
 }
 
-int ibmxdf_format::get_image_offset(const format &f, int head, int track)
+int ibmxdf_format::get_image_offset(const format &f, int head, int track) const
 {
 	return (2 * track) * compute_track_size(formats[0]);
 }
 
-const wd177x_format::format &ibmxdf_format::get_track_format(const format &f, int head, int track)
+const wd177x_format::format &ibmxdf_format::get_track_format(const format &f, int head, int track) const
 {
 	int n = -1;
 
@@ -178,7 +178,7 @@ const ibmxdf_format::format ibmxdf_format::formats_head1_track0[] = {
 	{}
 };
 
-bool ibmxdf_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool ibmxdf_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
 	int type = find_size(io, form_factor, variants);
 	if(type == -1)
@@ -186,8 +186,8 @@ bool ibmxdf_format::load(util::random_read &io, uint32_t form_factor, const std:
 
 	const format &f = formats[type];
 
-	for(int track=0; track < f.track_count; track++)
-		for(int head=0; head < f.head_count; head++) {
+	for(int track = 0; track < f.track_count; track++) {
+		for(int head = 0; head < f.head_count; head++) {
 			uint8_t sectdata[23 * 2 * 512]; // XXX magic
 			desc_s sectors[40];
 			floppy_image_format_t::desc_e *desc;
@@ -213,12 +213,12 @@ bool ibmxdf_format::load(util::random_read &io, uint32_t form_factor, const std:
 
 			build_sector_description(tf, sectdata, sectors, track, head);
 			int const track_size = compute_track_size(f) * 2; // read both sides at once
-			size_t actual;
-			io.read_at(get_image_offset(f, head, track), sectdata, track_size, actual);
+			/*auto const [err, actual] =*/ read_at(io, get_image_offset(f, head, track), sectdata, track_size); // FIXME: check for errors and premature EOF
 			generate_track(desc, track, head, sectors, tf.sector_count, total_size, image);
 		}
+	}
 
-	image->set_variant(f.variant);
+	image.set_variant(f.variant);
 
 	return true;
 }
@@ -264,5 +264,5 @@ void ibmxdf_format::build_sector_description(const format &f, uint8_t *sectdata,
 	}
 }
 
-const floppy_format_type FLOPPY_IBMXDF_FORMAT = &floppy_image_format_creator<ibmxdf_format>;
+const ibmxdf_format FLOPPY_IBMXDF_FORMAT;
 

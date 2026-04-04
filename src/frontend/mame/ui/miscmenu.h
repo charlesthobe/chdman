@@ -33,8 +33,8 @@ public:
 	virtual ~menu_network_devices();
 
 private:
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 };
 
 class menu_bookkeeping : public menu_textbox
@@ -48,8 +48,8 @@ protected:
 	virtual void populate_text(std::optional<text_layout> &layout, float &width, int &lines) override;
 
 private:
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 
 	attotime prevtime;
 };
@@ -81,8 +81,8 @@ private:
 		std::string next_name;
 	};
 
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 
 	std::vector<crosshair_item_data> m_data;
 	std::vector<std::string> m_pics;
@@ -96,8 +96,8 @@ public:
 	virtual ~menu_bios_selection();
 
 private:
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 };
 
 
@@ -112,8 +112,8 @@ public:
 	virtual ~menu_export();
 
 private:
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 
 	std::vector<const game_driver*> m_list;
 };
@@ -133,9 +133,6 @@ public:
 			std::function<void (bool, bool)> &&handler = nullptr);
 	virtual ~menu_machine_configure();
 
-protected:
-	virtual void custom_render(void *selectedref, float top, float bottom, float x, float y, float x2, float y2) override;
-
 private:
 	using s_bios = std::vector<std::pair<std::string, int>>;
 
@@ -144,15 +141,15 @@ private:
 		ADDFAV = 1,
 		DELFAV,
 		SAVE,
-		CONTROLLER,
 		VIDEO,
+		CONTROLLER,
 		BIOS,
 		ADVANCED,
 		LAST = ADVANCED
 	};
 
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 
 	void setup_bios();
 
@@ -177,10 +174,8 @@ public:
 	virtual ~menu_plugins_configure();
 
 protected:
-	virtual void populate(float &customtop, float &custombottom) override;
-	virtual void handle(event const *ev) override;
-
-	virtual void custom_render(void *selectedref, float top, float bottom, float x, float y, float x2, float y2) override;
+	virtual void populate() override;
+	virtual bool handle(event const *ev) override;
 };
 
 } // namespace ui

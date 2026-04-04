@@ -9,18 +9,25 @@
 ***************************************************************************/
 
 #include "emu.h"
-#include "emuopts.h"
-#include "debugger.h"
-#include "ui/uimain.h"
+
 #include "crsshair.h"
-#include "rendersw.hxx"
+#include "debugger.h"
+#include "emuopts.h"
+#include "fileio.h"
+#include "main.h"
 #include "output.h"
+#include "screen.h"
+
+#include "ui/uimain.h"
 
 #include "corestr.h"
+#include "path.h"
 #include "png.h"
 #include "xmlfile.h"
 
 #include "osdepend.h"
+
+#include "rendersw.hxx"
 
 
 //**************************************************************************
@@ -211,8 +218,9 @@ void video_manager::frame_update(bool from_debugger)
 	bool const update_screens = (phase == machine_phase::RUNNING) && (!machine().paused() || machine().options().update_in_pause());
 	bool anything_changed = update_screens && finish_screen_updates();
 
-	// draw the user interface
-	emulator_info::draw_user_interface(machine());
+	// update inputs and draw the user interface
+	machine().osd().input_update(true);
+	anything_changed = emulator_info::draw_user_interface(machine()) || anything_changed;
 
 	// let plugins draw over the UI
 	anything_changed = emulator_info::frame_hook() || anything_changed;
@@ -227,21 +235,20 @@ void video_manager::frame_update(bool from_debugger)
 
 	// if we're throttling, synchronize before rendering
 	attotime current_time = machine().time();
-	if (!from_debugger && !skipped_it && phase > machine_phase::INIT && !m_low_latency && effective_throttle())
+	if (!from_debugger && phase > machine_phase::INIT && !m_low_latency && effective_throttle())
 		update_throttle(current_time);
 
 	// ask the OSD to update
-	g_profiler.start(PROFILER_BLIT);
-	machine().osd().update(!from_debugger && skipped_it);
-	g_profiler.stop();
+	{
+		auto profile = g_profiler.start(PROFILER_BLIT);
+		machine().osd().update(!from_debugger && skipped_it);
+	}
 
 	// we synchronize after rendering instead of before, if low latency mode is enabled
-	if (!from_debugger && !skipped_it && phase > machine_phase::INIT && m_low_latency && effective_throttle())
+	if (!from_debugger && phase > machine_phase::INIT && m_low_latency && effective_throttle())
 		update_throttle(current_time);
 
-	// get most recent input now
-	machine().osd().input_update();
-
+	machine().osd().input_update(false);
 	emulator_info::periodic_check();
 
 	if (!from_debugger)
@@ -299,7 +306,7 @@ std::string video_manager::speed_text()
 
 	// append the speed for all cases except paused
 	if (!paused)
-		util::stream_format(str, "%4d%%", (int)(100 * m_speed_percent + 0.5));
+		util::stream_format(str, " %3d%%", int(100 * m_speed_percent + 0.5));
 
 	// display the number of partial updates as well
 	int partials = 0;
@@ -317,7 +324,7 @@ std::string video_manager::speed_text()
 //  file handle
 //-------------------------------------------------
 
-void video_manager::save_snapshot(screen_device *screen, emu_file &file)
+void video_manager::save_snapshot(screen_device *screen, util::core_file &file)
 {
 	// validate
 	assert(!m_snap_native || screen != nullptr);
@@ -378,18 +385,15 @@ void video_manager::save_active_screen_snapshots()
 
 void video_manager::begin_recording_screen(const std::string &filename, uint32_t index, screen_device *screen, movie_recording::format format)
 {
-	// determine the file extension
-	const char *extension = movie_recording::format_file_extension(format);
-
 	// create the emu_file
-	bool is_absolute_path = !filename.empty() && osd_is_absolute_path(filename);
+	bool const is_absolute_path = !filename.empty() && osd_is_absolute_path(filename);
 	std::unique_ptr<emu_file> movie_file = std::make_unique<emu_file>(
 			is_absolute_path ? "" : machine().options().snapshot_directory(),
 			OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_CREATE_PATHS);
 
 	// and open the actual file
 	std::error_condition filerr = filename.empty()
-			? open_next(*movie_file, extension)
+			? open_next(*movie_file, movie_recording::format_file_extension(format))
 			: movie_file->open(filename);
 	if (filerr)
 	{
@@ -427,26 +431,48 @@ void video_manager::begin_recording(const char *name, movie_recording::format fo
 	// clear out existing recordings
 	m_movie_recordings.clear();
 
+	// check if the supplied name already has the desired extension
+	std::string_view basename;
+	std::string extension;
+	if (name)
+	{
+		std::string_view const desired_ext = movie_recording::format_file_extension(format);
+		basename = name;
+		extension.reserve(1 + desired_ext.length());
+		extension.assign(1, '.').append(desired_ext);
+		if (core_filename_ends_with(basename, extension))
+		{
+			extension = basename.substr(basename.length() - extension.length());
+			basename.remove_suffix(extension.length());
+		}
+	}
+
 	if (m_snap_native)
 	{
+		std::string tempname;
 		for (uint32_t index = 0; index < count; index++, iter++)
 		{
-			create_snapshot_bitmap(iter.current());
+			create_snapshot_bitmap(iter.current()); // TODO: only do this when starting on-the-fly, and make name match AVI file name
 
-			std::string tempname;
 			if (name)
-				tempname = index > 0 ? name : util::string_format("%s%d", name, index);
+			{
+				if (1 < count)
+					tempname = util::string_format("%s%d%s", basename, index, extension);
+				else
+					tempname.assign(name).append(extension);
+			}
+
 			begin_recording_screen(
-				tempname,
-				index,
-				iter.current(),
-				format);
+					tempname,
+					index,
+					iter.current(),
+					format);
 		}
 	}
 	else
 	{
 		create_snapshot_bitmap(nullptr);
-		begin_recording_screen(name ? name : "", 0, iter.current(), format);
+		begin_recording_screen(std::string(basename) + extension, 0, iter.current(), format);
 	}
 }
 
@@ -492,7 +518,7 @@ void video_manager::exit()
 //  when there are no screens to drive it
 //-------------------------------------------------
 
-void video_manager::screenless_update_callback(void *ptr, int param)
+void video_manager::screenless_update_callback(s32 param)
 {
 	// force an update
 	frame_update(false);
@@ -506,8 +532,13 @@ void video_manager::screenless_update_callback(void *ptr, int param)
 
 void video_manager::postload()
 {
+	attotime const emutime = machine().time();
 	for (const auto &x : m_movie_recordings)
-		x->set_next_frame_time(machine().time());
+		x->set_next_frame_time(emutime);
+
+	// reset speed measurements
+	m_speed_last_realtime = osd_ticks();
+	m_speed_last_emutime = emutime;
 }
 
 
@@ -590,7 +621,7 @@ bool video_manager::finish_screen_updates()
 	bool has_live_screen = false;
 	for (screen_device &screen : iter)
 	{
-		if (screen.partial_scan_hpos() >= 0) // previous update ended mid-scanline
+		if (screen.partial_scan_hpos() > 0) // previous update ended mid-scanline
 			screen.update_now();
 		screen.update_partial(screen.visible_area().max_y);
 
@@ -696,7 +727,7 @@ void video_manager::update_throttle(attotime emutime)
 		// between 0 and 1/10th of a second ... anything outside of this range is obviously
 		// wrong and requires a resync
 		attoseconds_t emu_delta_attoseconds = (emutime - m_throttle_emutime).as_attoseconds();
-		if (emu_delta_attoseconds < 0 || emu_delta_attoseconds > ATTOSECONDS_PER_SECOND / 10)
+		if (emu_delta_attoseconds < 0 || emu_delta_attoseconds >= (ATTOSECONDS_PER_SECOND / (m_speed ? m_speed : 1000)) * 100)
 		{
 			if (LOG_THROTTLE)
 				machine().logerror("Resync due to weird emutime delta: %s\n", attotime(0, emu_delta_attoseconds).as_string(18));
@@ -776,7 +807,7 @@ osd_ticks_t video_manager::throttle_until_ticks(osd_ticks_t target_ticks)
 	bool const allowed_to_sleep = (machine().options().sleep() && (!effective_autoframeskip() || effective_frameskip() == 0)) || machine().paused();
 
 	// loop until we reach our target
-	g_profiler.start(PROFILER_IDLE);
+	auto profile = g_profiler.start(PROFILER_IDLE);
 	osd_ticks_t current_ticks = osd_ticks();
 	while (current_ticks < target_ticks)
 	{
@@ -812,7 +843,6 @@ osd_ticks_t video_manager::throttle_until_ticks(osd_ticks_t target_ticks)
 		}
 		current_ticks = new_ticks;
 	}
-	g_profiler.stop();
 
 	return current_ticks;
 }
@@ -960,10 +990,23 @@ void video_manager::recompute_speed(const attotime &emutime)
 	if (m_seconds_to_run != 0 && emutime.seconds() >= m_seconds_to_run)
 	{
 		// create a final screenshot
-		emu_file file(machine().options().snapshot_directory(), OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_CREATE_PATHS);
-		std::error_condition const filerr = open_next(file, "png");
-		if (!filerr)
-			save_snapshot(nullptr, file);
+		if (m_snap_native)
+		{
+			for (screen_device &screen : screen_device_enumerator(machine().root_device()))
+			{
+				emu_file file(machine().options().snapshot_directory(), OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_CREATE_PATHS);
+				std::error_condition const filerr = open_next(file, "png");
+				if (!filerr)
+					save_snapshot(&screen, file);
+			}
+		}
+		else
+		{
+			emu_file file(machine().options().snapshot_directory(), OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_CREATE_PATHS);
+			std::error_condition const filerr = open_next(file, "png");
+			if (!filerr)
+				save_snapshot(nullptr, file);
+		}
 
 		//printf("Scheduled exit at %f\n", emutime.as_double());
 		// schedule our demise
@@ -1057,14 +1100,19 @@ std::error_condition video_manager::open_next(emu_file &file, const char *extens
 	// handle defaults
 	const char *snapname = machine().options().snap_name();
 
-	if (snapname == nullptr || snapname[0] == 0)
+	if (!snapname || !snapname[0])
 		snapname = "%g/%i";
 	std::string snapstr(snapname);
 
-	// strip any extension in the provided name
-	int index = snapstr.find_last_of('.');
-	if (index != -1)
-		snapstr = snapstr.substr(0, index);
+	// strip desired extension if already present
+	std::string extstr;
+	extstr.reserve(1 + std::strlen(extension));
+	extstr.assign(1, '.').append(extension);
+	if (core_filename_ends_with(snapstr, extstr))
+	{
+		extstr = snapstr.substr(snapstr.length() - extstr.length());
+		snapstr.resize(snapstr.length() - extstr.length());
+	}
 
 	// handle %d in the template (for image devices)
 	std::string snapdev("%d_");
@@ -1129,27 +1177,30 @@ std::error_condition video_manager::open_next(emu_file &file, const char *extens
 
 	if (pos_time != -1)
 	{
-		char t_str[15];
+		char t_str[16];
 		const std::time_t cur_time = std::time(nullptr);
 		strftime(t_str, sizeof(t_str), "%Y%m%d_%H%M%S", std::localtime(&cur_time));
 		strreplace(snapstr, "%t", t_str);
 	}
 
-	// add our own extension
-	snapstr.append(".").append(extension);
+	// append extension
+	snapstr.append(extstr);
 
 	// substitute path and gamename up front
 	strreplace(snapstr, "/", PATH_SEPARATOR);
 	strreplace(snapstr, "%g", machine().basename());
 
-	// determine if the template has an index; if not, we always use the same name
+	// determine if the template has an index
 	std::string fname;
 	if (snapstr.find("%i") == -1)
+	{
+		// if not, we always use the same name
 		fname.assign(snapstr);
-
-	// otherwise, we scan for the next available filename
+	}
 	else
 	{
+		// otherwise, we scan for the next available filename
+
 		// try until we succeed
 		file.set_openflags(OPEN_FLAG_WRITE);
 		for (int seq = 0; ; seq++)
@@ -1182,7 +1233,7 @@ void video_manager::record_frame()
 		return;
 
 	// start the profiler and get the current time
-	g_profiler.start(PROFILER_MOVIE_REC);
+	auto profile = g_profiler.start(PROFILER_MOVIE_REC);
 	attotime curtime = machine().time();
 
 	bool error = false;
@@ -1201,7 +1252,6 @@ void video_manager::record_frame()
 
 	if (error)
 		end_recording();
-	g_profiler.stop();
 }
 
 

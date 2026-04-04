@@ -2,7 +2,7 @@
 // copyright-holders:Fabio Priuli
 /*********************************************************************
 
-    formats/dcp_dsk.h
+    formats/dcp_dsk.cpp
 
     PC98 DCP & DCU disk images
 
@@ -29,22 +29,22 @@ dcp_format::dcp_format()
 {
 }
 
-const char *dcp_format::name() const
+const char *dcp_format::name() const noexcept
 {
 	return "dcx";
 }
 
-const char *dcp_format::description() const
+const char *dcp_format::description() const noexcept
 {
 	return "DCP/DCU disk image";
 }
 
-const char *dcp_format::extensions() const
+const char *dcp_format::extensions() const noexcept
 {
 	return "dcp,dcu";
 }
 
-int dcp_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int dcp_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	uint64_t size;
 	if (io.length(size))
@@ -54,8 +54,7 @@ int dcp_format::identify(util::random_read &io, uint32_t form_factor, const std:
 	int heads, tracks, spt, bps, count_tracks = 0;
 	bool is_hdb = false;
 
-	size_t actual;
-	io.read_at(0, h, 0xa2, actual);
+	/*auto const [err, actual] =*/ read_at(io, 0, h, 0xa2); // FIXME: check for errors and premature EOF
 
 	// First byte is the disk format (see below in load() for details)
 	switch (h[0])
@@ -108,23 +107,22 @@ int dcp_format::identify(util::random_read &io, uint32_t form_factor, const std:
 	// in theory track map should be enough (former check), but some images have it wrong!
 	// hence, if this check fails, we also allow for images with all tracks and wrong track map
 	if (size - 0xa2 == (heads * count_tracks * spt * bps) || size - 0xa2 == (heads * tracks * spt * bps))
-		return 100;
+		return FIFID_STRUCT|FIFID_SIZE;
 
 	// for disk type 0x11 the head 0 track 0 has 26 sectors of half width, so we need to compensate calculation
 	if (is_hdb && (size - 0xa2 + (0x80 * 26) == (heads * count_tracks * spt * bps) || size - 0xa2 + (0x80 * 26) == (heads * tracks * spt * bps)))
-		return 100;
+		return FIFID_STRUCT|FIFID_SIZE;
 
 	return 0;
 }
 
-bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
-	size_t actual;
 	uint8_t h[0xa2];
 	int heads, tracks, spt, bps;
 	bool is_hdb = false;
 
-	io.read_at(0, h, 0xa2, actual);
+	/*auto const [err, actual] =*/ read_at(io, 0, h, 0xa2); // FIXME: check for errors and premature EOF
 
 	// First byte is the disk format:
 	switch (h[0])
@@ -221,7 +219,7 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 		for (int track = 0; track < tracks; track++)
 			for (int head = 0; head < heads; head++)
 			{
-				io.read_at(0xa2 + bps * spt * (track * heads + head), sect_data, bps * spt, actual);
+				/*auto const [err, actual] =*/ read_at(io, 0xa2 + bps * spt * (track * heads + head), sect_data, bps * spt); // FIXME: check for errors and premature EOF
 
 				for (int i = 0; i < spt; i++)
 				{
@@ -231,7 +229,8 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 					sects[i].size        = ssize;
 					sects[i].actual_size = bps;
 					sects[i].deleted     = false;
-					sects[i].bad_crc     = false;
+					sects[i].bad_data_crc = false;
+					sects[i].bad_addr_crc = false;
 					sects[i].data        = sect_data + i * bps;
 				}
 
@@ -241,7 +240,7 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	else    // FIXME: the code below is untested, because no image was found... there might be some silly mistake in the disk geometry!
 	{
 		// Read Head 0 Track 0 is FM with 26 sectors of 128bytes instead of 256
-		io.read_at(0xa2, sect_data, 128 * spt, actual);
+		/*auto const [err, actual] =*/ read_at(io, 0xa2, sect_data, 128 * spt); // FIXME: check for errors and premature EOF
 
 		for (int i = 0; i < spt; i++)
 		{
@@ -251,14 +250,15 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 			sects[i].size        = 0;
 			sects[i].actual_size = 128;
 			sects[i].deleted     = false;
-			sects[i].bad_crc     = false;
+			sects[i].bad_data_crc = false;
+			sects[i].bad_addr_crc = false;
 			sects[i].data        = sect_data + i * 128;
 		}
 
 		build_pc_track_fm(0, 0, image, cell_count, spt, sects, calc_default_pc_gap3_size(form_factor, 128));
 
 		// Read Head 1 Track 0 is MFM with 26 sectors of 256bytes
-		io.read_at(0xa2 + 128 * spt, sect_data, bps * spt, actual);
+		/*auto const [err, actual] =*/ read_at(io, 0xa2 + 128 * spt, sect_data, bps * spt); // FIXME: check for errors and premature EOF
 
 		for (int i = 0; i < spt; i++)
 		{
@@ -268,7 +268,8 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 			sects[i].size        = ssize;
 			sects[i].actual_size = bps;
 			sects[i].deleted     = false;
-			sects[i].bad_crc     = false;
+			sects[i].bad_data_crc = false;
+			sects[i].bad_addr_crc = false;
 			sects[i].data        = sect_data + i * bps;
 		}
 
@@ -279,7 +280,7 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 		for (int track = 1; track < tracks; track++)
 			for (int head = 0; head < heads; head++)
 			{
-				io.read_at(data_offs + bps * spt * ((track - 1) * heads + head), sect_data, bps * spt, actual);
+				/*auto const [err, actual] =*/ read_at(io, data_offs + bps * spt * ((track - 1) * heads + head), sect_data, bps * spt); // FIXME: check for errors and premature EOF
 
 				for (int i = 0; i < spt; i++)
 				{
@@ -289,7 +290,8 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 					sects[i].size        = ssize;
 					sects[i].actual_size = bps;
 					sects[i].deleted     = false;
-					sects[i].bad_crc     = false;
+					sects[i].bad_data_crc = false;
+					sects[i].bad_addr_crc = false;
 					sects[i].data        = sect_data + i * bps;
 				}
 
@@ -300,9 +302,4 @@ bool dcp_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	return true;
 }
 
-bool dcp_format::supports_save() const
-{
-	return false;
-}
-
-const floppy_format_type FLOPPY_DCP_FORMAT = &floppy_image_format_creator<dcp_format>;
+const dcp_format FLOPPY_DCP_FORMAT;

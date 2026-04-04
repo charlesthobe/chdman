@@ -8,7 +8,7 @@
 
     Used by Jeff Vavasour's CoCo Emulators
 
-     Documentation taken from Tim Linder's web site:
+     Documentation taken from Tim Lindner's web site:
          http://tlindner.macmess.org/?page_id=86
 
      A. Header length
@@ -115,17 +115,17 @@ jvc_format::jvc_format()
 {
 }
 
-const char *jvc_format::name() const
+const char *jvc_format::name() const noexcept
 {
 	return "jvc";
 }
 
-const char *jvc_format::description() const
+const char *jvc_format::description() const noexcept
 {
 	return "JVC disk image";
 }
 
-const char *jvc_format::extensions() const
+const char *jvc_format::extensions() const noexcept
 {
 	return "jvc,dsk";
 }
@@ -135,17 +135,20 @@ bool jvc_format::parse_header(util::random_read &io, int &header_size, int &trac
 	// The JVC format has a header whose size is the size of the image modulo 256.  Currently, we only
 	// handle up to five header bytes
 	uint64_t size;
-	if (io.length(size))
+	if (io.length(size) || !size)
 		return false;
 	header_size = size % 256;
 	uint8_t header[5];
 
 	// if we know that this is a header of a bad size, we can fail immediately; otherwise read the header
-	size_t actual;
-	if (header_size >= sizeof(header))
+	if (header_size >= sizeof(header)) // TODO: wouldn't this make more sense with > than >=?  The first case in the following switch statement is unreachable as-is.
 		return false;
 	if (header_size > 0)
-		io.read_at(0, header, header_size, actual);
+	{
+		auto const [err, actual] = read_at(io, 0, header, header_size);
+		if (err || (actual != header_size))
+			return false;
+	}
 
 	// default values
 	heads = 1;
@@ -170,20 +173,30 @@ bool jvc_format::parse_header(util::random_read &io, int &header_size, int &trac
 		break;
 	}
 
-	osd_printf_verbose("Floppy disk image geometry: %d tracks, %d head(s), %d sectors with %d bytes.\n", tracks, heads, sectors, sector_size);
+	if (tracks > 82)
+	{
+		osd_printf_info("jvc_format: track count of %d unsupported\n", tracks);
+		return false;
+	}
+
+	osd_printf_verbose("jvc_format: Floppy disk image geometry: %d tracks, %d head(s), %d sectors with %d bytes.\n", tracks, heads, sectors, sector_size);
 
 	return tracks * heads * sectors * sector_size == (size - header_size);
 }
 
-int jvc_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int jvc_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	int header_size, tracks, heads, sectors, sector_size, sector_base_id;
-	return parse_header(io, header_size, tracks, heads, sectors, sector_size, sector_base_id) ? 50 : 0;
+	if (parse_header(io, header_size, tracks, heads, sectors, sector_size, sector_base_id))
+		return FIFID_SIZE;
+	else
+		return 0;
 }
 
-bool jvc_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool jvc_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
 	int header_size, track_count, head_count, sector_count, sector_size, sector_base_id;
+	int max_tracks, max_heads;
 
 	if (!parse_header(io, header_size, track_count, head_count, sector_count, sector_size, sector_base_id))
 		return false;
@@ -192,6 +205,20 @@ bool jvc_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	if (sector_count * sector_size > 10000)
 	{
 		osd_printf_error("jvc_format: incorrect track layout\n");
+		return false;
+	}
+
+	image.get_maximal_geometry(max_tracks, max_heads);
+
+	if (track_count > max_tracks)
+	{
+		osd_printf_error("jvc_format: Floppy disk has too many tracks for this drive (floppy tracks=%d, drive tracks=%d).\n", track_count, max_tracks);
+		return false;
+	}
+
+	if (head_count > max_heads)
+	{
+		osd_printf_error("jvc_format: Floppy disk has too many sides for this drive (floppy sides=%d, drive sides=%d).\n", head_count, max_heads);
 		return false;
 	}
 
@@ -214,11 +241,11 @@ bool jvc_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 				sectors[interleave[i]].actual_size = sector_size;
 				sectors[interleave[i]].size = sector_size >> 8;
 				sectors[interleave[i]].deleted = false;
-				sectors[interleave[i]].bad_crc = false;
+				sectors[interleave[i]].bad_data_crc = false;
+				sectors[interleave[i]].bad_addr_crc = false;
 				sectors[interleave[i]].data = &sector_data[sector_offset];
 
-				size_t actual;
-				io.read_at(file_offset, sectors[interleave[i]].data, sector_size, actual);
+				/*auto const [err, actual] =*/ read_at(io, file_offset, sectors[interleave[i]].data, sector_size); // FIXME: check for errors and premature EOF
 
 				sector_offset += sector_size;
 				file_offset += sector_size;
@@ -231,12 +258,12 @@ bool jvc_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	return true;
 }
 
-bool jvc_format::save(util::random_read_write &io, const std::vector<uint32_t> &variants, floppy_image *image)
+bool jvc_format::save(util::random_read_write &io, const std::vector<uint32_t> &variants, const floppy_image &image) const
 {
 	uint64_t file_offset = 0;
 
 	int track_count, head_count;
-	image->get_actual_geometry(track_count, head_count);
+	image.get_actual_geometry(track_count, head_count);
 
 	// we'll write a header if the disk is two-sided
 	if (head_count == 2)
@@ -244,8 +271,7 @@ bool jvc_format::save(util::random_read_write &io, const std::vector<uint32_t> &
 		uint8_t header[2];
 		header[0] = 18;
 		header[1] = 2;
-		size_t actual;
-		io.write_at(file_offset, header, sizeof(header), actual);
+		/*auto const [err, actual] =*/ write_at(io, file_offset, header, sizeof(header)); // FIXME: check for errors
 		file_offset += sizeof(header);
 	}
 
@@ -265,8 +291,7 @@ bool jvc_format::save(util::random_read_write &io, const std::vector<uint32_t> &
 					return false;
 				}
 
-				size_t actual;
-				io.write_at(file_offset, sectors[1 + i].data(), 256, actual);
+				/*auto const [err, actual] =*/ write_at(io, file_offset, sectors[1 + i].data(), 256); // FIXME: check for errors
 				file_offset += 256;
 			}
 		}
@@ -275,9 +300,9 @@ bool jvc_format::save(util::random_read_write &io, const std::vector<uint32_t> &
 	return true;
 }
 
-bool jvc_format::supports_save() const
+bool jvc_format::supports_save() const noexcept
 {
 	return true;
 }
 
-const floppy_format_type FLOPPY_JVC_FORMAT = &floppy_image_format_creator<jvc_format>;
+const jvc_format FLOPPY_JVC_FORMAT;

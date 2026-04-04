@@ -19,14 +19,14 @@ class sf7000_format : public upd765_format
 public:
 	sf7000_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
 };
 
-extern const floppy_format_type FLOPPY_SF7000_FORMAT;
+extern const sf7000_format FLOPPY_SF7000_FORMAT;
 
 #endif // MAME_FORMATS_SF7000_DSK_H

@@ -2,7 +2,7 @@
 // copyright-holders:Sergey Svishchev
 /*********************************************************************
 
-    formats/ppg_dsk.c
+    formats/ppg_dsk.cpp
 
     PPG Waveterm formats
 
@@ -14,17 +14,17 @@ ppg_format::ppg_format() : wd177x_format(formats)
 {
 }
 
-const char *ppg_format::name() const
+const char *ppg_format::name() const noexcept
 {
 	return "ppg";
 }
 
-const char *ppg_format::description() const
+const char *ppg_format::description() const noexcept
 {
 	return "PPG Waveterm disk image";
 }
 
-const char *ppg_format::extensions() const
+const char *ppg_format::extensions() const noexcept
 {
 	return "wta";
 }
@@ -62,4 +62,4 @@ void ppg_format::build_sector_description(const format &f, uint8_t *sectdata, de
 	}
 }
 
-const floppy_format_type FLOPPY_PPG_FORMAT = &floppy_image_format_creator<ppg_format>;
+const ppg_format FLOPPY_PPG_FORMAT;

@@ -12,12 +12,26 @@
 #include "dvmemory.h"
 
 #include "debugcpu.h"
-#include "debugger.h"
 
 #include <algorithm>
 #include <cctype>
+#include <locale>
 #include <tuple>
 
+
+//**************************************************************************
+//  HELPER FUNCTIONS
+//**************************************************************************
+
+namespace {
+
+constexpr u8 sanitise_character(u8 ch)
+{
+	// assume ISO-8859-1 (low 256 Unicode codepoints) - tab, soft hyphen, C0 and C1 cause problems
+	return ('\t' == ch) ? ' ' : (0xadU == ch) ? '-' : ((' ' > ch) || (('~' < ch) && (0xa0U > ch))) ? '.' : ch;
+}
+
+} // anonymous namespace
 
 //**************************************************************************
 //  GLOBAL VARIABLES
@@ -52,24 +66,24 @@ const debug_view_memory::memory_view_pos debug_view_memory::s_memory_pos_table[1
 //  debug_view_memory_source - constructors
 //-------------------------------------------------
 
-debug_view_memory_source::debug_view_memory_source(std::string &&name, address_space &space)
-	: debug_view_source(std::move(name), &space.device())
-	, m_space(&space)
-	, m_memintf(dynamic_cast<device_memory_interface *>(&space.device()))
+debug_view_memory_source::debug_view_memory_source(std::string &&name, device_memory_interface *mintf, int spacenum)
+	: debug_view_source(std::move(name), &mintf->device())
+	, m_memintf(mintf)
+	, m_spacenum(spacenum)
 	, m_base(nullptr)
 	, m_blocklength(0)
 	, m_numblocks(0)
 	, m_blockstride(0)
 	, m_offsetxor(0)
-	, m_endianness(space.endianness())
-	, m_prefsize(space.data_width() / 8)
+	, m_endianness(mintf->logical_space_config(spacenum)->endianness())
+	, m_prefsize(mintf->logical_space_config(spacenum)->data_width() / 8)
 {
 }
 
 debug_view_memory_source::debug_view_memory_source(std::string &&name, memory_region &region)
 	: debug_view_source(std::move(name))
-	, m_space(nullptr)
 	, m_memintf(nullptr)
+	, m_spacenum(-1)
 	, m_base(region.base())
 	, m_blocklength(region.bytes())
 	, m_numblocks(1)
@@ -82,8 +96,8 @@ debug_view_memory_source::debug_view_memory_source(std::string &&name, memory_re
 
 debug_view_memory_source::debug_view_memory_source(std::string &&name, void *base, int element_size, int num_elements, int num_blocks, int block_stride)
 	: debug_view_source(std::move(name))
-	, m_space(nullptr)
 	, m_memintf(nullptr)
+	, m_spacenum(-1)
 	, m_base(base)
 	, m_blocklength(element_size * num_elements)
 	, m_numblocks(num_blocks)
@@ -154,13 +168,13 @@ void debug_view_memory::enumerate_sources()
 	{
 		for (int spacenum = 0; spacenum < memintf.max_space_count(); ++spacenum)
 		{
-			if (memintf.has_space(spacenum))
+			if (memintf.has_logical_space(spacenum))
 			{
-				address_space &space(memintf.space(spacenum));
+				const address_space_config *config(memintf.logical_space_config(spacenum));
 				m_source_list.emplace_back(
 						std::make_unique<debug_view_memory_source>(
-							util::string_format("%s '%s' %s space memory", memintf.device().name(), memintf.device().tag(), space.name()),
-							space));
+							util::string_format(std::locale::classic(), "%s '%s' %s space memory", memintf.device().name(), memintf.device().tag(), config->name()),
+							&memintf, spacenum));
 			}
 		}
 	}
@@ -215,11 +229,12 @@ void debug_view_memory::view_notify(debug_view_notification type)
 	{
 		// update for the new source
 		const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
+		const address_space_config *config = source.m_memintf ? source.m_memintf->logical_space_config(source.m_spacenum) : nullptr;
 		m_chunks_per_row = m_bytes_per_chunk * m_chunks_per_row / source.m_prefsize;
 		m_bytes_per_chunk = source.m_prefsize;
 		if (m_bytes_per_chunk > 8)
 			m_bytes_per_chunk = 8;
-		bool octal = source.m_space != nullptr && source.m_space->is_octal();
+		bool octal = config && config->is_octal();
 		switch (m_bytes_per_chunk)
 		{
 		case 1:
@@ -239,9 +254,9 @@ void debug_view_memory::view_notify(debug_view_notification type)
 			break;
 		}
 		m_shift_bits = octal ? 3 : 4;
-		m_steps_per_chunk = source.m_space ? source.m_space->byte_to_address(m_bytes_per_chunk) : m_bytes_per_chunk;
-		if (source.m_space != nullptr)
-			m_expression.set_context(&source.m_space->device().debug()->symtable());
+		m_steps_per_chunk = config ? config->byte2addr(m_bytes_per_chunk) : m_bytes_per_chunk;
+		if (source.m_memintf != nullptr)
+			m_expression.set_context(&source.m_memintf->device().debug()->symtable());
 		else
 			m_expression.set_context(nullptr);
 		m_address_radix = octal ? 8 : 16;
@@ -295,13 +310,13 @@ void debug_view_memory::generate_row(debug_view_char *destmin, debug_view_char *
 
 	// generate the address
 	char addrtext[20];
-	sprintf(addrtext, m_addrformat.c_str(), address);
+	snprintf(addrtext, 20, m_addrformat.c_str(), address);
 	debug_view_char *dest = destrow + m_section[0].m_pos + 1;
 	for (int ch = 0; addrtext[ch] != 0 && ch < m_section[0].m_width - 1; ch++, dest++)
 		if (dest >= destmin && dest < destmax)
 			dest->byte = addrtext[ch];
 
-	// generate the data and the ascii string
+	// generate the data and the ASCII string
 	std::string chunkascii;
 	if (m_shift_bits != 0)
 	{
@@ -323,7 +338,7 @@ void debug_view_memory::generate_row(debug_view_char *destmin, debug_view_char *
 			for (int i = 0; i < m_bytes_per_chunk; i++)
 			{
 				u8 chval = chunkdata >> (8 * (m_bytes_per_chunk - i - 1));
-				chunkascii += char((ismapped && isprint(chval)) ? chval : '.');
+				chunkascii += char(ismapped ? sanitise_character(chval) : '.');
 			}
 		}
 	}
@@ -345,15 +360,15 @@ void debug_view_memory::generate_row(debug_view_char *destmin, debug_view_char *
 				switch (m_data_format)
 				{
 				case data_format::FLOAT_32BIT:
-					sprintf(valuetext, "%.8g", u32_to_float(u32(chunkdata)));
+					snprintf(valuetext, 64, "%.8g", u32_to_float(u32(chunkdata)));
 					break;
 				case data_format::FLOAT_64BIT:
-					sprintf(valuetext, "%.24g", u64_to_double(chunkdata));
+					snprintf(valuetext, 64, "%.24g", u64_to_double(chunkdata));
 					break;
 				case data_format::FLOAT_80BIT:
 				{
 					float64_t f64 = extF80M_to_f64(&chunkdata80);
-					sprintf(valuetext, "%.24g", u64_to_double(f64.v));
+					snprintf(valuetext, 64, "%.24g", u64_to_double(f64.v));
 					break;
 				}
 				default:
@@ -380,7 +395,7 @@ void debug_view_memory::generate_row(debug_view_char *destmin, debug_view_char *
 			for (int i = 0; i < m_bytes_per_chunk; i++)
 			{
 				u8 chval = chunkdata >> (8 * (m_bytes_per_chunk - i - 1));
-				chunkascii += char((ismapped && isprint(chval)) ? chval : '.');
+				chunkascii += char(ismapped ? sanitise_character(chval) : '.');
 			}
 		}
 	}
@@ -437,7 +452,7 @@ void debug_view_memory::view_update()
 		if (effrow < m_total.y)
 		{
 			offs_t addrbyte = m_byte_offset + effrow * m_bytes_per_row;
-			offs_t address = (source.m_space != nullptr) ? source.m_space->byte_to_address(addrbyte) : addrbyte;
+			offs_t address = (source.m_memintf != nullptr) ? source.m_memintf->logical_space_config(source.m_spacenum)->byte2addr(addrbyte) : addrbyte;
 			generate_row(destmin, destmax, destrow, address);
 		}
 	}
@@ -526,16 +541,8 @@ void debug_view_memory::view_char(int chval)
 				if (hexchar == nullptr || (m_shift_bits == 3 && chval >= '8'))
 					break;
 
-				const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
-				offs_t address = (source.m_space != nullptr) ? source.m_space->byte_to_address(pos.m_address) : pos.m_address;
-				u64 data;
-				bool ismapped = read(m_bytes_per_chunk, address, data);
-				if (!ismapped)
-					break;
-
-				data &= ~(util::make_bitmask<u64>(m_shift_bits) << pos.m_shift);
-				data |= u64(hexchar - hexvals) << pos.m_shift;
-				write(m_bytes_per_chunk, address, data);
+				if (!write_digit(pos.m_address, pos.m_shift, hexchar - hexvals))
+					break; // TODO: alert OSD?
 			}
 			// fall through to the right-arrow press
 			[[fallthrough]];
@@ -609,22 +616,24 @@ void debug_view_memory::recompute()
 	// determine the maximum address and address format string from the raw information
 	int addrchars;
 	u64 maxbyte;
-	if (source.m_space != nullptr)
+	const address_space_config *config = nullptr;
+	if (source.m_memintf != nullptr)
 	{
-		m_maxaddr = m_no_translation ? source.m_space->addrmask() : source.m_space->logaddrmask();
-		maxbyte = source.m_space->address_to_byte_end(m_maxaddr);
+		config = m_no_translation ? source.m_memintf->space_config(source.m_spacenum) : source.m_memintf->logical_space_config(source.m_spacenum);
+		m_maxaddr = m_no_translation ? config->addrmask() : config->logaddrmask();
+		maxbyte = config->addr2byte_end(m_maxaddr);
 		if (m_address_radix == 8)
-			addrchars = ((m_no_translation ? source.m_space->addr_width() : source.m_space->logaddr_width()) + 2) / 3;
+			addrchars = ((m_no_translation ? config->addr_width() : config->logaddr_width()) + 2) / 3;
 		else
-			addrchars = m_no_translation ? source.m_space->addrchars() : source.m_space->logaddrchars();
+			addrchars = m_no_translation ? config->addrchars() : config->logaddrchars();
 	}
 	else
 	{
 		maxbyte = m_maxaddr = (source.m_blocklength * source.m_numblocks) - 1;
 		if (m_address_radix == 8)
-			addrchars = string_format("%o", m_maxaddr).size();
+			addrchars = string_format(std::locale::classic(), "%o", m_maxaddr).size();
 		else
-			addrchars = string_format("%X", m_maxaddr).size();
+			addrchars = string_format(std::locale::classic(), "%X", m_maxaddr).size();
 	}
 
 	// generate an 8-byte aligned format for the address
@@ -632,9 +641,9 @@ void debug_view_memory::recompute()
 	{
 	case 8:
 		if (!m_reverse_view)
-			m_addrformat = string_format("%*s%%0%do", 11 - addrchars, "", addrchars);
+			m_addrformat = string_format(std::locale::classic(), "%*s%%0%do", 11 - addrchars, "", addrchars);
 		else
-			m_addrformat = string_format("%%0%do%*s", addrchars, 11 - addrchars, "");
+			m_addrformat = string_format(std::locale::classic(), "%%0%do%*s", addrchars, 11 - addrchars, "");
 		break;
 
 	case 10:
@@ -644,32 +653,17 @@ void debug_view_memory::recompute()
 
 	case 16:
 		if (!m_reverse_view)
-			m_addrformat = string_format("%*s%%0%dX", 8 - addrchars, "", addrchars);
+			m_addrformat = string_format(std::locale::classic(), "%*s%%0%dX", 8 - addrchars, "", addrchars);
 		else
-			m_addrformat = string_format("%%0%dX%*s", addrchars, 8 - addrchars, "");
+			m_addrformat = string_format(std::locale::classic(), "%%0%dX%*s", addrchars, 8 - addrchars, "");
 		break;
 	}
-
-	// if we are viewing a space with a minimum chunk size, clamp the bytes per chunk
-	// BAD
-#if 0
-	if (source.m_space != nullptr && source.m_space->byte_to_address(1) > 1)
-	{
-		u32 min_bytes_per_chunk = source.m_space->byte_to_address(1);
-		while (m_bytes_per_chunk < min_bytes_per_chunk)
-		{
-			m_bytes_per_chunk *= 2;
-			m_chunks_per_row /= 2;
-		}
-		m_chunks_per_row = std::max(1U, m_chunks_per_row);
-	}
-#endif
 
 	// recompute the byte offset based on the most recent expression result
 	m_bytes_per_row = m_bytes_per_chunk * m_chunks_per_row;
 	offs_t val = m_expression.value();
-	if (source.m_space)
-		val = source.m_space->address_to_byte(val);
+	if (config)
+		val = config->addr2byte(val);
 	m_byte_offset = val % m_bytes_per_row;
 
 	// compute the section widths
@@ -728,8 +722,11 @@ bool debug_view_memory::needs_recompute()
 	{
 		const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
 		offs_t val = m_expression.value();
-		if (source.m_space)
-			val = source.m_space->address_to_byte(val & (m_no_translation ? source.m_space->addrmask() : source.m_space->logaddrmask()));
+		if (source.m_memintf)
+		{
+			const address_space_config *config = m_no_translation ? source.m_memintf->space_config(source.m_spacenum) : source.m_memintf->logical_space_config(source.m_spacenum);
+			val = config->addr2byte(val & (m_no_translation ? config->addrmask() : config->logaddrmask()));
+		}
 		recompute = true;
 
 		m_byte_offset = val % m_bytes_per_row;
@@ -851,19 +848,22 @@ bool debug_view_memory::read(u8 size, offs_t offs, u64 &data)
 	const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
 
 	// if no raw data, just use the standard debug routines
-	if (source.m_space)
+	if (source.m_memintf)
 	{
 		auto dis = machine().disable_side_effects();
 
 		bool ismapped = offs <= m_maxaddr;
+		address_space *tspace;
 		if (ismapped && !m_no_translation)
 		{
 			offs_t dummyaddr = offs;
-			ismapped = source.m_memintf->translate(source.m_space->spacenum(), TRANSLATE_READ_DEBUG, dummyaddr);
+			ismapped = source.m_memintf->translate(source.m_spacenum, device_memory_interface::TR_READ, dummyaddr, tspace);
 		}
+		else
+			tspace = &source.m_memintf->space(source.m_spacenum);
 		data = ~u64(0);
 		if (ismapped)
-			data = m_expression.context().read_memory(*source.m_space, offs, size, !m_no_translation);
+			data = m_expression.context().read_memory(*tspace, offs, size, !m_no_translation);
 		return ismapped;
 	}
 
@@ -924,14 +924,15 @@ bool debug_view_memory::read(u8 size, offs_t offs, extFloat80_t &data)
 bool debug_view_memory::read_chunk(offs_t address, int chunknum, u64 &chunkdata)
 {
 	const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
-	if (source.m_space) {
-		address += source.m_space->byte_to_address(chunknum * m_bytes_per_chunk);
-		if (!source.m_space->byte_to_address(m_bytes_per_chunk)) {
+	if (source.m_memintf) {
+		const address_space_config *config = source.m_memintf ? source.m_memintf->logical_space_config(source.m_spacenum) : nullptr;
+		address += config->byte2addr(chunknum * m_bytes_per_chunk);
+		if (!config->byte2addr(m_bytes_per_chunk)) {
 			// if chunks are too small to be addressable, read a minimal chunk and split it up
-			u8 minbytes = 1 << -source.m_space->addr_shift();
+			u8 minbytes = 1 << -config->addr_shift();
 			bool ismapped = read(minbytes, address, chunkdata);
 			u8 suboffset = (chunknum * m_bytes_per_chunk) & (minbytes - 1);
-			chunkdata >>= 8 * (source.m_space->endianness() == ENDIANNESS_LITTLE ? suboffset : minbytes - m_bytes_per_chunk - suboffset);
+			chunkdata >>= 8 * (config->endianness() == ENDIANNESS_LITTLE ? suboffset : minbytes - m_bytes_per_chunk - suboffset);
 			chunkdata &= ~u64(0) >> (64 - 8 * m_bytes_per_chunk);
 			return ismapped;
 		}
@@ -951,10 +952,15 @@ void debug_view_memory::write(u8 size, offs_t offs, u64 data)
 	const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
 
 	// if no raw data, just use the standard debug routines
-	if (source.m_space)
+	if (source.m_memintf)
 	{
 		auto dis = machine().disable_side_effects();
-		m_expression.context().write_memory(*source.m_space, offs, data, size, !m_no_translation);
+		address_space *space;
+		if (m_no_translation)
+			space = &source.m_memintf->space(source.m_spacenum);
+		else if (!source.m_memintf->translate(source.m_spacenum, device_memory_interface::TR_WRITE, offs, space))
+			return;
+		m_expression.context().write_memory(*space, offs, data, size, false);
 		return;
 	}
 
@@ -980,6 +986,42 @@ void debug_view_memory::write(u8 size, offs_t offs, u64 data)
 	if (offs >= (source.m_blocklength * source.m_numblocks))
 		return;
 	*(reinterpret_cast<u8 *>(source.m_base) + (offs / source.m_blocklength * source.m_blockstride) + (offs % source.m_blocklength)) = data;
+}
+
+
+//-------------------------------------------------
+//  write_digit - write one hex or octal digit
+//  at the given address and bit position
+//-------------------------------------------------
+
+bool debug_view_memory::write_digit(offs_t offs, u8 pos, u8 digit)
+{
+	const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
+	const address_space_config *config = source.m_memintf ? source.m_memintf->logical_space_config(source.m_spacenum) : nullptr;
+	offs_t address = config ? config->byte2addr(offs) : offs;
+	u64 data;
+	bool ismapped = read(m_bytes_per_chunk, address, data);
+	if (!ismapped)
+		return false;
+
+	// clamp to chunk size
+	if (m_bytes_per_chunk * 8 < pos + m_shift_bits)
+	{
+		assert(m_bytes_per_chunk * 8 > pos);
+		digit &= util::make_bitmask<u8>(m_bytes_per_chunk * 8 - pos);
+	}
+
+	u64 write_data = (data & ~(util::make_bitmask<u64>(m_shift_bits) << pos)) | (u64(digit) << pos);
+	write(m_bytes_per_chunk, address, write_data);
+
+	// verify that data reads back as it was written
+	if (source.m_memintf != nullptr)
+	{
+		read(m_bytes_per_chunk, address, data);
+		return data == write_data;
+	}
+	else
+		return true;
 }
 
 
@@ -1032,12 +1074,13 @@ void debug_view_memory::set_data_format(data_format format)
 
 	pos = begin_update_and_get_cursor_pos();
 	const debug_view_memory_source &source = downcast<const debug_view_memory_source &>(*m_source);
+	const address_space_config *config = source.m_memintf ? source.m_memintf->logical_space_config(source.m_spacenum) : nullptr;
 	if (is_hex_format(format) && is_hex_format(m_data_format)) {
 		pos.m_address += (pos.m_shift / 8) ^ ((source.m_endianness == ENDIANNESS_LITTLE) ? 0 : (m_bytes_per_chunk - 1));
 		pos.m_shift %= 8;
 
 		m_bytes_per_chunk = get_posdata(format).m_bytes;
-		m_steps_per_chunk = source.m_space ? source.m_space->byte_to_address(m_bytes_per_chunk) : m_bytes_per_chunk;
+		m_steps_per_chunk = config ? config->byte2addr(m_bytes_per_chunk) : m_bytes_per_chunk;
 		m_chunks_per_row = m_bytes_per_row / m_bytes_per_chunk;
 		if (m_chunks_per_row < 1)
 			m_chunks_per_row = 1;
@@ -1066,7 +1109,7 @@ void debug_view_memory::set_data_format(data_format format)
 		m_chunks_per_row = m_bytes_per_row / m_bytes_per_chunk;
 		if (m_chunks_per_row < 1)
 			m_chunks_per_row = 1;
-		m_steps_per_chunk = source.m_space ? source.m_space->byte_to_address(m_bytes_per_chunk) : m_bytes_per_chunk;
+		m_steps_per_chunk = config ? config->byte2addr(m_bytes_per_chunk) : m_bytes_per_chunk;
 		pos.m_shift = get_posdata(format).m_shift[0] & 0x7f;
 		pos.m_address -= pos.m_address % m_bytes_per_chunk;
 	}

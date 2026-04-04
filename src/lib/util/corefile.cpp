@@ -2,7 +2,7 @@
 // copyright-holders:Aaron Giles, Vas Crabb
 /***************************************************************************
 
-    corefile.c
+    corefile.cpp
 
     File access functions.
 
@@ -12,13 +12,10 @@
 
 #include "coretmpl.h"
 #include "osdcore.h"
-#include "path.h"
 #include "unicode.h"
 #include "vecstream.h"
 
-#include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -51,23 +48,22 @@ public:
 	virtual std::error_condition tell(std::uint64_t &result) noexcept override { return m_file.tell(result); }
 	virtual std::error_condition length(std::uint64_t &result) noexcept override { return m_file.length(result); }
 
-	virtual std::error_condition read(void *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.read(buffer, length, actual); }
-	virtual std::error_condition read_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.read_at(offset, buffer, length, actual); }
+	virtual std::error_condition read_some(void *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.read_some(buffer, length, actual); }
+	virtual std::error_condition read_some_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.read_some_at(offset, buffer, length, actual); }
 
 	virtual std::error_condition finalize() noexcept override { return m_file.finalize(); }
 	virtual std::error_condition flush() noexcept override { return m_file.flush(); }
-	virtual std::error_condition write(void const *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.write(buffer, length, actual); }
-	virtual std::error_condition write_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.write_at(offset, buffer, length, actual); }
+	virtual std::error_condition write_some(void const *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.write_some(buffer, length, actual); }
+	virtual std::error_condition write_some_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override { return m_file.write_some_at(offset, buffer, length, actual); }
 
 	virtual bool eof() const override { return m_file.eof(); }
 
 	virtual int getc() override { return m_file.getc(); }
 	virtual int ungetc(int c) override { return m_file.ungetc(c); }
 	virtual char *gets(char *s, int n) override { return m_file.gets(s, n); }
-	virtual void const *buffer() override { return m_file.buffer(); }
 
 	virtual int puts(std::string_view s) override { return m_file.puts(s); }
-	virtual int vprintf(util::format_argument_pack<std::ostream> const &args) override { return m_file.vprintf(args); }
+	virtual int vprintf(util::format_argument_pack<char> const &args) override { return m_file.vprintf(args); }
 	virtual std::error_condition truncate(std::uint64_t offset) override { return m_file.truncate(offset); }
 
 private:
@@ -92,7 +88,7 @@ public:
 	virtual int ungetc(int c) override;
 	virtual char *gets(char *s, int n) override;
 	virtual int puts(std::string_view s) override;
-	virtual int vprintf(util::format_argument_pack<std::ostream> const &args) override;
+	virtual int vprintf(util::format_argument_pack<char> const &args) override;
 
 protected:
 	core_text_file(std::uint32_t openflags)
@@ -121,15 +117,45 @@ private:
 };
 
 
-class core_in_memory_file : public core_text_file
+class core_basic_file : public core_text_file
+{
+public:
+	virtual std::error_condition seek(std::int64_t offset, int whence) noexcept override;
+	virtual std::error_condition tell(std::uint64_t &result) noexcept override { result = m_index; return std::error_condition(); }
+	virtual std::error_condition length(std::uint64_t &result) noexcept override { result = m_size; return std::error_condition(); }
+
+	virtual bool eof() const override;
+
+protected:
+	core_basic_file(std::uint32_t openflags, std::uint64_t length) noexcept
+		: core_text_file(openflags)
+		, m_index(0)
+		, m_size(length)
+	{
+	}
+
+	std::uint64_t index() const noexcept { return m_index; }
+	void add_offset(std::size_t increment) noexcept { m_index += increment; m_size = (std::max)(m_size, m_index); }
+	std::uint64_t size() const noexcept { return m_size; }
+	void set_size(std::uint64_t value) noexcept { m_size = value; }
+
+	static std::size_t safe_buffer_copy(
+			void const *source, std::size_t sourceoffs, std::size_t sourcelen,
+			void *dest, std::size_t destoffs, std::size_t destlen) noexcept;
+
+
+private:
+	std::uint64_t   m_index;            // current file offset
+	std::uint64_t   m_size;             // total file length
+};
+
+class core_in_memory_file final : public core_basic_file
 {
 public:
 	core_in_memory_file(std::uint32_t openflags, void const *data, std::size_t length, bool copy) noexcept
-		: core_text_file(openflags)
+		: core_basic_file(openflags, length)
 		, m_data_allocated(false)
 		, m_data(copy ? nullptr : data)
-		, m_offset(0)
-		, m_length(length)
 	{
 		if (copy)
 		{
@@ -141,41 +167,24 @@ public:
 
 	~core_in_memory_file() override { purge(); }
 
-	virtual std::error_condition seek(std::int64_t offset, int whence) noexcept override;
-	virtual std::error_condition tell(std::uint64_t &result) noexcept override { result = m_offset; return std::error_condition(); }
-	virtual std::error_condition length(std::uint64_t &result) noexcept override { result = m_length; return std::error_condition(); }
-
-	virtual std::error_condition read(void *buffer, std::size_t length, std::size_t &actual) noexcept override;
-	virtual std::error_condition read_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override;
+	virtual std::error_condition read_some(void *buffer, std::size_t length, std::size_t &actual) noexcept override;
+	virtual std::error_condition read_some_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override;
 
 	virtual std::error_condition finalize() noexcept override { return std::error_condition(); }
 	virtual std::error_condition flush() noexcept override { clear_putback(); return std::error_condition(); }
-	virtual std::error_condition write(void const *buffer, std::size_t length, std::size_t &actual) noexcept override { actual = 0; return std::errc::bad_file_descriptor; }
-	virtual std::error_condition write_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override { actual = 0; return std::errc::bad_file_descriptor; }
+	virtual std::error_condition write_some(void const *buffer, std::size_t length, std::size_t &actual) noexcept override { actual = 0; return std::errc::bad_file_descriptor; }
+	virtual std::error_condition write_some_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override { actual = 0; return std::errc::bad_file_descriptor; }
 
-	virtual bool eof() const override;
-
-	virtual void const *buffer() override { return m_data; }
+	void const *buffer() const { return m_data; }
 
 	virtual std::error_condition truncate(std::uint64_t offset) override;
 
 protected:
-	core_in_memory_file(std::uint32_t openflags, std::uint64_t length) noexcept
-		: core_text_file(openflags)
-		, m_data_allocated(false)
-		, m_data(nullptr)
-		, m_offset(0)
-		, m_length(length)
-	{
-	}
-
-	bool is_loaded() const noexcept { return nullptr != m_data; }
-
 	void *allocate() noexcept
 	{
-		if (m_data || (std::numeric_limits<std::size_t>::max() < m_length))
+		if (m_data || (std::numeric_limits<std::size_t>::max() < size()))
 			return nullptr;
-		void *data = malloc(m_length);
+		void *data = malloc(size());
 		if (data)
 		{
 			m_data_allocated = true;
@@ -192,47 +201,33 @@ protected:
 		m_data = nullptr;
 	}
 
-	std::uint64_t offset() const noexcept { return m_offset; }
-	void add_offset(std::size_t increment) noexcept { m_offset += increment; m_length = (std::max)(m_length, m_offset); }
-	std::uint64_t length() const noexcept { return m_length; }
-	void set_length(std::uint64_t value) noexcept { m_length = value; }
-
-	static std::size_t safe_buffer_copy(
-			void const *source, std::size_t sourceoffs, std::size_t sourcelen,
-			void *dest, std::size_t destoffs, std::size_t destlen) noexcept;
-
 private:
 	bool            m_data_allocated;   // was the data allocated by us?
 	void const *    m_data;             // file data, if RAM-based
-	std::uint64_t   m_offset;           // current file offset
-	std::uint64_t   m_length;           // total file length
 };
 
 
-class core_osd_file final : public core_in_memory_file
+class core_osd_file final : public core_basic_file
 {
 public:
 	core_osd_file(std::uint32_t openmode, osd_file::ptr &&file, std::uint64_t length)
-		: core_in_memory_file(openmode, length)
+		: core_basic_file(openmode, length)
 		, m_file(std::move(file))
 	{
 	}
 	~core_osd_file() override;
 
-	virtual std::error_condition read(void *buffer, std::size_t length, std::size_t &actual) noexcept override;
-	virtual std::error_condition read_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override;
+	virtual std::error_condition read_some(void *buffer, std::size_t length, std::size_t &actual) noexcept override;
+	virtual std::error_condition read_some_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept override;
 
 	virtual std::error_condition finalize() noexcept override;
 	virtual std::error_condition flush() noexcept override;
-	virtual std::error_condition write(void const *buffer, std::size_t length, std::size_t &actual) noexcept override;
-	virtual std::error_condition write_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override;
-
-	virtual void const *buffer() override;
+	virtual std::error_condition write_some(void const *buffer, std::size_t length, std::size_t &actual) noexcept override;
+	virtual std::error_condition write_some_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept override;
 
 	virtual std::error_condition truncate(std::uint64_t offset) override;
 
 protected:
-
 	bool is_buffered(std::uint64_t offset) const noexcept { return (offset >= m_bufferbase) && (offset < (m_bufferbase + m_bufferbytes)); }
 
 private:
@@ -246,13 +241,13 @@ private:
 
 
 
-/***************************************************************************
-    core_text_file
-***************************************************************************/
+//**************************************************************************
+//  core_text_file
+//**************************************************************************
 
-/*-------------------------------------------------
-    getc - read a character from a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  getc - read a character from a file
+//-------------------------------------------------
 
 int core_text_file::getc()
 {
@@ -265,9 +260,8 @@ int core_text_file::getc()
 		{
 			if (!pos)
 			{
-				std::size_t readlen;
 				std::uint8_t bom[4];
-				read(bom, 4, readlen);
+				auto const [err, readlen] = read(*this, bom, 4); // FIXME: check for errors
 				if (readlen == 4)
 				{
 					if (bom[0] == 0xef && bom[1] == 0xbb && bom[2] == 0xbf)
@@ -308,15 +302,14 @@ int core_text_file::getc()
 		// fetch the next character
 		// FIXME: all of this plays fast and loose with error checking and seeks backwards far too frequently
 		char16_t utf16_buffer[UTF16_CHAR_MAX];
-		auto uchar = char32_t(~0);
+		char32_t uchar = ~char32_t(0);
 		switch (m_text_type)
 		{
 		default:
 		case text_file_type::OSD:
 			{
 				char default_buffer[16];
-				std::size_t readlen;
-				read(default_buffer, sizeof(default_buffer), readlen);
+				auto const [err, readlen] = read(*this, default_buffer, sizeof(default_buffer));
 				if (readlen > 0)
 				{
 					auto const charlen = osd_uchar_from_osdchar(&uchar, default_buffer, readlen / sizeof(default_buffer[0]));
@@ -328,8 +321,7 @@ int core_text_file::getc()
 		case text_file_type::UTF8:
 			{
 				char utf8_buffer[UTF8_CHAR_MAX];
-				std::size_t readlen;
-				read(utf8_buffer, sizeof(utf8_buffer), readlen);
+				auto const [err, readlen] = read(*this, utf8_buffer, sizeof(utf8_buffer));
 				if (readlen > 0)
 				{
 					auto const charlen = uchar_from_utf8(&uchar, utf8_buffer, readlen / sizeof(utf8_buffer[0]));
@@ -340,8 +332,7 @@ int core_text_file::getc()
 
 		case text_file_type::UTF16BE:
 			{
-				std::size_t readlen;
-				read(utf16_buffer, sizeof(utf16_buffer), readlen);
+				auto const [err, readlen] = read(*this, utf16_buffer, sizeof(utf16_buffer));
 				if (readlen > 0)
 				{
 					auto const charlen = uchar_from_utf16be(&uchar, utf16_buffer, readlen / sizeof(utf16_buffer[0]));
@@ -352,8 +343,7 @@ int core_text_file::getc()
 
 		case text_file_type::UTF16LE:
 			{
-				std::size_t readlen;
-				read(utf16_buffer, sizeof(utf16_buffer), readlen);
+				auto const [err, readlen] = read(*this, utf16_buffer, sizeof(utf16_buffer));
 				if (readlen > 0)
 				{
 					auto const charlen = uchar_from_utf16le(&uchar, utf16_buffer, readlen / sizeof(utf16_buffer[0]));
@@ -365,8 +355,7 @@ int core_text_file::getc()
 		case text_file_type::UTF32BE:
 			{
 				// FIXME: deal with read returning short
-				std::size_t readlen;
-				read(&uchar, sizeof(uchar), readlen);
+				auto const [err, readlen] = read(*this, &uchar, sizeof(uchar));
 				if (sizeof(uchar) == readlen)
 					uchar = big_endianize_int32(uchar);
 			}
@@ -375,8 +364,7 @@ int core_text_file::getc()
 		case text_file_type::UTF32LE:
 			{
 				// FIXME: deal with read returning short
-				std::size_t readlen;
-				read(&uchar, sizeof(uchar), readlen);
+				auto const [err, readlen] = read(*this, &uchar, sizeof(uchar));
 				if (sizeof(uchar) == readlen)
 					uchar = little_endianize_int32(uchar);
 			}
@@ -406,10 +394,10 @@ int core_text_file::getc()
 }
 
 
-/*-------------------------------------------------
-    ungetc - put back a character read from a
-    file
--------------------------------------------------*/
+//-------------------------------------------------
+//  ungetc - put back a character read from a
+//  file
+//-------------------------------------------------
 
 int core_text_file::ungetc(int c)
 {
@@ -419,9 +407,9 @@ int core_text_file::ungetc(int c)
 }
 
 
-/*-------------------------------------------------
-    gets - read a line from a text file
--------------------------------------------------*/
+//-------------------------------------------------
+//  gets - read a line from a text file
+//-------------------------------------------------
 
 char *core_text_file::gets(char *s, int n)
 {
@@ -466,13 +454,13 @@ char *core_text_file::gets(char *s, int n)
 }
 
 
-/*-------------------------------------------------
-    puts - write a string to a text file
--------------------------------------------------*/
+//-------------------------------------------------
+//  puts - write a string to a text file
+//-------------------------------------------------
 
 int core_text_file::puts(std::string_view s)
 {
-	// TODO: what to do about write errors or short writes (interrupted)?
+	// TODO: what to do about write errors?
 	// The API doesn't lend itself to reporting the error as the return
 	// value includes extra bytes inserted like the UTF-8 marker and
 	// carriage returns.
@@ -516,8 +504,7 @@ int core_text_file::puts(std::string_view s)
 		// if we overflow, break into chunks
 		if (pconvbuf >= convbuf + std::size(convbuf) - 10)
 		{
-			std::size_t written;
-			write(convbuf, pconvbuf - convbuf, written); // FIXME: error ignored here
+			auto const [err, written] = write(*this, convbuf, pconvbuf - convbuf); // FIXME: error ignored here
 			count += written;
 			pconvbuf = convbuf;
 		}
@@ -526,8 +513,7 @@ int core_text_file::puts(std::string_view s)
 	// final flush
 	if (pconvbuf != convbuf)
 	{
-		std::size_t written;
-		write(convbuf, pconvbuf - convbuf, written); // FIXME: error ignored here
+		auto const [err, written] = write(*this, convbuf, pconvbuf - convbuf); // FIXME: error ignored here
 		count += written;
 	}
 
@@ -535,30 +521,30 @@ int core_text_file::puts(std::string_view s)
 }
 
 
-/*-------------------------------------------------
-    vprintf - vfprintf to a text file
--------------------------------------------------*/
+//-------------------------------------------------
+//  vprintf - vfprintf to a text file
+//-------------------------------------------------
 
-int core_text_file::vprintf(util::format_argument_pack<std::ostream> const &args)
+int core_text_file::vprintf(util::format_argument_pack<char> const &args)
 {
 	m_printf_buffer.clear();
 	m_printf_buffer.reserve(1024);
 	m_printf_buffer.seekp(0, ovectorstream::beg);
-	util::stream_format<std::ostream, std::ostream>(m_printf_buffer, args);
+	util::stream_format(m_printf_buffer, args);
 	return puts(buf_to_string_view(m_printf_buffer));
 }
 
 
 
-/***************************************************************************
-    core_in_memory_file
-***************************************************************************/
+//**************************************************************************
+//  core_basic_file
+//**************************************************************************
 
-/*-------------------------------------------------
-    seek - seek within a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  seek - seek within a file
+//-------------------------------------------------
 
-std::error_condition core_in_memory_file::seek(std::int64_t offset, int whence) noexcept
+std::error_condition core_basic_file::seek(std::int64_t offset, int whence) noexcept
 {
 	// flush any buffered char
 	clear_putback(); // TODO: report errors; also, should the argument check happen before this?
@@ -569,33 +555,33 @@ std::error_condition core_in_memory_file::seek(std::int64_t offset, int whence) 
 	case SEEK_SET:
 		if (0 > offset)
 			return std::errc::invalid_argument;
-		m_offset = offset;
+		m_index = offset;
 		return std::error_condition();
 
 	case SEEK_CUR:
 		if (0 > offset)
 		{
-			if (std::uint64_t(-offset) > m_offset)
+			if (std::uint64_t(-offset) > m_index)
 				return std::errc::invalid_argument;
 		}
-		else if ((std::numeric_limits<std::uint64_t>::max() - offset) < m_offset)
+		else if ((std::numeric_limits<std::uint64_t>::max() - offset) < m_index)
 		{
 			return std::errc::invalid_argument;
 		}
-		m_offset += offset;
+		m_index += offset;
 		return std::error_condition();
 
 	case SEEK_END:
 		if (0 > offset)
 		{
-			if (std::uint64_t(-offset) > m_length)
+			if (std::uint64_t(-offset) > m_size)
 				return std::errc::invalid_argument;
 		}
-		else if ((std::numeric_limits<std::uint64_t>::max() - offset) < m_length)
+		else if ((std::numeric_limits<std::uint64_t>::max() - offset) < m_size)
 		{
 			return std::errc::invalid_argument;
 		}
-		m_offset = m_length + offset;
+		m_index = m_size + offset;
 		return std::error_condition();
 
 	default:
@@ -604,72 +590,27 @@ std::error_condition core_in_memory_file::seek(std::int64_t offset, int whence) 
 }
 
 
-/*-------------------------------------------------
-    eof - return 1 if we're at the end of file
--------------------------------------------------*/
+//-------------------------------------------------
+//  eof - return true if we're at the end of file
+//-------------------------------------------------
 
-bool core_in_memory_file::eof() const
+bool core_basic_file::eof() const
 {
 	// check for buffered chars
 	if (has_putback())
 		return false;
 
 	// if the offset == length, we're at EOF
-	return (m_offset >= m_length);
+	return (m_index >= m_size);
 }
 
 
-/*-------------------------------------------------
-    read - read from a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  safe_buffer_copy - copy safely from one
+//  bounded buffer to another
+//-------------------------------------------------
 
-std::error_condition core_in_memory_file::read(void *buffer, std::size_t length, std::size_t &actual) noexcept
-{
-	clear_putback();
-
-	// handle RAM-based files
-	if (m_offset < m_length)
-		actual = safe_buffer_copy(m_data, std::size_t(m_offset), std::size_t(m_length), buffer, 0, length);
-	else
-		actual = 0U;
-	m_offset += actual;
-	return std::error_condition();
-}
-
-std::error_condition core_in_memory_file::read_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept
-{
-	clear_putback();
-
-	// handle RAM-based files
-	if (offset < m_length)
-		actual = safe_buffer_copy(m_data, std::size_t(offset), std::size_t(m_length), buffer, 0, length);
-	else
-		actual = 0U;
-	return std::error_condition();
-}
-
-
-/*-------------------------------------------------
-    truncate - truncate a file
--------------------------------------------------*/
-
-std::error_condition core_in_memory_file::truncate(std::uint64_t offset)
-{
-	if (m_length < offset)
-		return std::errc::io_error; // TODO: revisit this error code
-
-	// adjust to new length and offset
-	set_length(offset);
-	return std::error_condition();
-}
-
-
-/*-------------------------------------------------
-    safe_buffer_copy - copy safely from one
-    bounded buffer to another
--------------------------------------------------*/
-
-std::size_t core_in_memory_file::safe_buffer_copy(
+std::size_t core_basic_file::safe_buffer_copy(
 		void const *source, std::size_t sourceoffs, std::size_t sourcelen,
 		void *dest, std::size_t destoffs, std::size_t destlen) noexcept
 {
@@ -688,13 +629,62 @@ std::size_t core_in_memory_file::safe_buffer_copy(
 
 
 
-/***************************************************************************
-    core_osd_file
-***************************************************************************/
+//**************************************************************************
+//  core_in_memory_file
+//**************************************************************************
 
-/*-------------------------------------------------
-    closes a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  read - read from a file
+//-------------------------------------------------
+
+std::error_condition core_in_memory_file::read_some(void *buffer, std::size_t length, std::size_t &actual) noexcept
+{
+	clear_putback();
+
+	// handle RAM-based files
+	if (index() < size())
+		actual = safe_buffer_copy(m_data, std::size_t(index()), std::size_t(size()), buffer, 0, length);
+	else
+		actual = 0U;
+	add_offset(actual);
+	return std::error_condition();
+}
+
+std::error_condition core_in_memory_file::read_some_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept
+{
+	clear_putback();
+
+	// handle RAM-based files
+	if (offset < size())
+		actual = safe_buffer_copy(m_data, std::size_t(offset), std::size_t(size()), buffer, 0, length);
+	else
+		actual = 0U;
+	return std::error_condition();
+}
+
+
+//-------------------------------------------------
+//  truncate - truncate a file
+//-------------------------------------------------
+
+std::error_condition core_in_memory_file::truncate(std::uint64_t offset)
+{
+	if (size() < offset)
+		return std::errc::io_error; // TODO: revisit this error code
+
+	// adjust to new length and offset
+	set_size(offset);
+	return std::error_condition();
+}
+
+
+//**************************************************************************
+//  core_osd_file
+//**************************************************************************
+
+//-------------------------------------------------
+//  closes a file
+//-------------------------------------------------
 
 core_osd_file::~core_osd_file()
 {
@@ -702,24 +692,27 @@ core_osd_file::~core_osd_file()
 }
 
 
-/*-------------------------------------------------
-    read - read from a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  read - read from a file
+//-------------------------------------------------
 
-std::error_condition core_osd_file::read(void *buffer, std::size_t length, std::size_t &actual) noexcept
+std::error_condition core_osd_file::read_some(void *buffer, std::size_t length, std::size_t &actual) noexcept
 {
 	// since osd_file works like pread/pwrite, implement in terms of read_at
-	// core_osd_file is delcared final, so a derived class can't interfere
-	std::error_condition err = read_at(offset(), buffer, length, actual);
+	// core_osd_file is declared final, so a derived class can't interfere
+	std::error_condition err = read_some_at(index(), buffer, length, actual);
 	add_offset(actual);
 	return err;
 }
 
 
-std::error_condition core_osd_file::read_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept
+std::error_condition core_osd_file::read_some_at(std::uint64_t offset, void *buffer, std::size_t length, std::size_t &actual) noexcept
 {
-	if (!m_file || is_loaded())
-		return core_in_memory_file::read_at(offset, buffer, length, actual);
+	if (!m_file)
+	{
+		actual = 0U;
+		return std::errc::bad_file_descriptor;
+	}
 
 	// flush any buffered char
 	clear_putback();
@@ -748,18 +741,12 @@ std::error_condition core_osd_file::read_at(std::uint64_t offset, void *buffer, 
 		}
 		else
 		{
-			// read the remainder directly from the file
-			do
-			{
-				// may need to split into chunks if size_t is larger than 32 bits
-				std::uint32_t const chunk = std::min<std::common_type_t<std::uint32_t, std::size_t> >(std::numeric_limits<std::uint32_t>::max(), length - actual);
-				std::uint32_t bytes_read;
-				err = m_file->read(reinterpret_cast<std::uint8_t *>(buffer) + actual, offset + actual, chunk, bytes_read);
-				if (err || !bytes_read)
-					break;
+			// read the remainder directly from the file - may need to return short if size_t is larger than 32 bits
+			std::uint32_t const chunk = std::min<std::common_type_t<std::uint32_t, std::size_t> >(std::numeric_limits<std::uint32_t>::max(), length - actual);
+			std::uint32_t bytes_read;
+			err = m_file->read(reinterpret_cast<std::uint8_t *>(buffer) + actual, offset + actual, chunk, bytes_read);
+			if (!err)
 				actual += bytes_read;
-			}
-			while (actual < length);
 		}
 	}
 
@@ -768,131 +755,77 @@ std::error_condition core_osd_file::read_at(std::uint64_t offset, void *buffer, 
 }
 
 
-/*-------------------------------------------------
-    buffer - return a pointer to the file buffer;
-    if it doesn't yet exist, load the file into
-    RAM first
--------------------------------------------------*/
+//-------------------------------------------------
+//  write - write to a file
+//-------------------------------------------------
 
-void const *core_osd_file::buffer()
-{
-	// if we already have data, just return it
-	if (!is_loaded() && length())
-	{
-		// allocate some memory
-		void *const buf = allocate();
-		if (!buf)
-			return nullptr;
-
-		// read the file
-		std::uint64_t bytes_read = 0;
-		std::uint64_t remaining = length();
-		std::uint8_t *ptr = reinterpret_cast<std::uint8_t *>(buf);
-		while (remaining)
-		{
-			std::uint32_t const chunk = std::min<std::common_type_t<std::uint32_t, std::size_t> >(std::numeric_limits<std::uint32_t>::max(), remaining);
-			std::uint32_t read_length;
-			std::error_condition const filerr = m_file->read(ptr, bytes_read, chunk, read_length);
-			if (filerr || !read_length)
-			{
-				purge();
-				return core_in_memory_file::buffer();
-			}
-			bytes_read += read_length;
-			remaining -= read_length;
-			ptr += read_length;
-		}
-		m_file.reset(); // close the file because we don't need it anymore
-	}
-	return core_in_memory_file::buffer();
-}
-
-
-/*-------------------------------------------------
-    write - write to a file
--------------------------------------------------*/
-
-std::error_condition core_osd_file::write(void const *buffer, std::size_t length, std::size_t &actual) noexcept
+std::error_condition core_osd_file::write_some(void const *buffer, std::size_t length, std::size_t &actual) noexcept
 {
 	// since osd_file works like pread/pwrite, implement in terms of write_at
-	// core_osd_file is delcared final, so a derived class can't interfere
-	std::error_condition err = write_at(offset(), buffer, length, actual);
+	// core_osd_file is declared final, so a derived class can't interfere
+	std::error_condition err = write_some_at(index(), buffer, length, actual);
 	add_offset(actual);
 	return err;
 }
 
 
-std::error_condition core_osd_file::write_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept
+std::error_condition core_osd_file::write_some_at(std::uint64_t offset, void const *buffer, std::size_t length, std::size_t &actual) noexcept
 {
-	// can't write to RAM-based stuff
-	if (is_loaded())
-		return core_in_memory_file::write_at(offset, buffer, length, actual);
-
 	// flush any buffered char
 	clear_putback();
 
 	// invalidate any buffered data
 	m_bufferbytes = 0U;
 
-	// do the write - may need to split into chunks if size_t is larger than 32 bits
-	actual = 0U;
-	while (length)
+	// do the write - may need to return short if size_t is larger than 32 bits
+	std::uint32_t const chunk = std::min<std::common_type_t<std::uint32_t, std::size_t> >(std::numeric_limits<std::uint32_t>::max(), length);
+	std::uint32_t bytes_written;
+	std::error_condition err = m_file->write(buffer, offset, chunk, bytes_written);
+	if (err)
 	{
 		// bytes written not valid on error
-		std::uint32_t const chunk = std::min<std::common_type_t<std::uint32_t, std::size_t> >(std::numeric_limits<std::uint32_t>::max(), length);
-		std::uint32_t bytes_written;
-		std::error_condition err = m_file->write(buffer, offset, chunk, bytes_written);
-		if (err)
-			return err;
+		actual = 0U;
+	}
+	else
+	{
 		assert(chunk >= bytes_written);
 		offset += bytes_written;
-		buffer = reinterpret_cast<std::uint8_t const *>(buffer) + bytes_written;
-		length -= bytes_written;
-		actual += bytes_written;
-		set_length((std::max)(this->length(), offset));
+		actual = bytes_written;
+		set_size((std::max)(size(), offset));
 	}
-	return std::error_condition();
+	return err;
 }
 
 
-/*-------------------------------------------------
-    truncate - truncate a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  truncate - truncate a file
+//-------------------------------------------------
 
 std::error_condition core_osd_file::truncate(std::uint64_t offset)
 {
-	if (is_loaded())
-		return core_in_memory_file::truncate(offset);
-
 	// truncate file
 	std::error_condition err = m_file->truncate(offset);
 	if (err)
 		return err;
 
 	// and adjust to new length and offset
-	set_length(offset);
+	set_size(offset);
 	return std::error_condition();
 }
 
 
-/*-------------------------------------------------
-    flush - flush file buffers
--------------------------------------------------*/
+//-------------------------------------------------
+//  flush - flush file buffers
+//-------------------------------------------------
 
 std::error_condition core_osd_file::finalize() noexcept
 {
-	if (is_loaded())
-		return core_in_memory_file::finalize();
-
 	return std::error_condition();
 }
 
 
 std::error_condition core_osd_file::flush() noexcept
 {
-	if (is_loaded())
-		return core_in_memory_file::flush();
-
 	// flush any buffered char
 	clear_putback();
 
@@ -906,14 +839,14 @@ std::error_condition core_osd_file::flush() noexcept
 
 
 
-/***************************************************************************
-    core_file
-***************************************************************************/
+//**************************************************************************
+//  core_file
+//**************************************************************************
 
-/*-------------------------------------------------
-    open - open a file for access and
-    return an error code
--------------------------------------------------*/
+//-------------------------------------------------
+//  open - open a file for access and
+//  return an error code
+//-------------------------------------------------
 
 std::error_condition core_file::open(std::string_view filename, std::uint32_t openflags, ptr &file) noexcept
 {
@@ -931,10 +864,10 @@ std::error_condition core_file::open(std::string_view filename, std::uint32_t op
 }
 
 
-/*-------------------------------------------------
-    open_ram - open a RAM-based buffer for file-
-    like access and return an error code
--------------------------------------------------*/
+//-------------------------------------------------
+//  open_ram - open a RAM-based buffer for file-
+//  like access and return an error code
+//-------------------------------------------------
 
 std::error_condition core_file::open_ram(void const *data, std::size_t length, std::uint32_t openflags, ptr &file) noexcept
 {
@@ -959,11 +892,11 @@ std::error_condition core_file::open_ram(void const *data, std::size_t length, s
 }
 
 
-/*-------------------------------------------------
-    open_ram_copy - open a copy of a RAM-based
-    buffer for file-like access and return an
-    error code
--------------------------------------------------*/
+//-------------------------------------------------
+//  open_ram_copy - open a copy of a RAM-based
+//  buffer for file-like access and return an
+//  error code
+//-------------------------------------------------
 
 std::error_condition core_file::open_ram_copy(void const *data, std::size_t length, std::uint32_t openflags, ptr &file) noexcept
 {
@@ -979,7 +912,7 @@ std::error_condition core_file::open_ram_copy(void const *data, std::size_t leng
 	if (std::uint64_t(length) != length)
 		return std::errc::file_too_large;
 
-	ptr result(new (std::nothrow) core_in_memory_file(openflags, data, length, true));
+	std::unique_ptr<core_in_memory_file> result(new (std::nothrow) core_in_memory_file(openflags, data, length, true));
 	if (!result || !result->buffer())
 		return std::errc::not_enough_memory;
 
@@ -988,10 +921,10 @@ std::error_condition core_file::open_ram_copy(void const *data, std::size_t leng
 }
 
 
-/*-------------------------------------------------
-    open_proxy - open a proxy to an existing file
-    object and return an error code
--------------------------------------------------*/
+//-------------------------------------------------
+//  open_proxy - open a proxy to an existing file
+//  object and return an error code
+//-------------------------------------------------
 
 std::error_condition core_file::open_proxy(core_file &file, ptr &proxy) noexcept
 {
@@ -1004,22 +937,22 @@ std::error_condition core_file::open_proxy(core_file &file, ptr &proxy) noexcept
 }
 
 
-/*-------------------------------------------------
-    closes a file
--------------------------------------------------*/
+//-------------------------------------------------
+//  closes a file
+//-------------------------------------------------
 
 core_file::~core_file()
 {
 }
 
 
-/*-------------------------------------------------
-    load - open a file with the specified
-    filename, read it into memory, and return a
-    pointer
--------------------------------------------------*/
+//-------------------------------------------------
+//  load - open a file with the specified
+//  filename, read it into memory, and return a
+//  pointer
+//-------------------------------------------------
 
-std::error_condition core_file::load(std::string_view filename, void **data, std::uint32_t &length) noexcept
+std::error_condition core_file::load(std::string_view filename, void **data, std::size_t &length) noexcept
 {
 	std::error_condition err;
 
@@ -1034,20 +967,20 @@ std::error_condition core_file::load(std::string_view filename, void **data, std
 	err = file->length(size);
 	if (err)
 		return err;
-	else if (std::uint32_t(size) != size) // TODO: change interface to use size_t rather than uint32_t for output size
+	else if (std::size_t(size) != size)
 		return std::errc::file_too_large;
 
 	// allocate memory
 	*data = std::malloc(std::size_t(size));
 	if (!*data)
 		return std::errc::not_enough_memory;
-	length = std::uint32_t(size);
+	length = std::size_t(size);
 
 	// read the data
 	if (size)
 	{
 		std::size_t actual;
-		err = file->read(*data, std::size_t(size), actual);
+		std::tie(err, actual) = read(*file, *data, std::size_t(size));
 		if (err || (size != actual))
 		{
 			std::free(*data);
@@ -1055,7 +988,7 @@ std::error_condition core_file::load(std::string_view filename, void **data, std
 			if (err)
 				return err;
 			else
-				return std::errc::io_error; // TODO: revisit this error code - either interrupted by an async signal or file truncated out from under us
+				return std::errc::io_error; // TODO: revisit this error code - file truncated out from under us
 		}
 	}
 
@@ -1089,14 +1022,14 @@ std::error_condition core_file::load(std::string_view filename, std::vector<uint
 	if (size)
 	{
 		std::size_t actual;
-		err = file->read(&data[0], std::size_t(size), actual);
+		std::tie(err, actual) = read(*file, &data[0], std::size_t(size));
 		if (err || (size != actual))
 		{
 			data.clear();
 			if (err)
 				return err;
 			else
-				return std::errc::io_error; // TODO: revisit this error code - either interrupted by an async signal or file truncated out from under us
+				return std::errc::io_error; // TODO: revisit this error code - file truncated out from under us
 		}
 	}
 
@@ -1105,71 +1038,3 @@ std::error_condition core_file::load(std::string_view filename, std::vector<uint
 }
 
 } // namespace util
-
-
-
-/***************************************************************************
-    FILENAME UTILITIES
-***************************************************************************/
-
-// -------------------------------------------------
-// core_filename_extract_base - extract the base
-// name from a filename; note that this makes
-// assumptions about path separators
-// -------------------------------------------------
-
-std::string_view core_filename_extract_base(std::string_view name, bool strip_extension) noexcept
-{
-	// find the start of the basename
-	auto const start = std::find_if(name.rbegin(), name.rend(), &util::is_directory_separator);
-	if (start == name.rbegin())
-		return std::string_view();
-
-	// find the end of the basename
-	auto const chop_position = strip_extension
-		? std::find(name.rbegin(), start, '.')
-		: start;
-	auto const end = ((chop_position != start) && (std::next(chop_position) != start))
-		? std::next(chop_position)
-		: name.rbegin();
-
-	return std::string_view(&*start.base(), end.base() - start.base());
-}
-
-
-// -------------------------------------------------
-// core_filename_extract_extension
-// -------------------------------------------------
-
-std::string_view core_filename_extract_extension(std::string_view filename, bool strip_period) noexcept
-{
-	auto loc = filename.find_last_of('.');
-	if (loc != std::string_view::npos)
-		return filename.substr(loc + (strip_period ? 1 : 0));
-	else
-		return std::string_view();
-}
-
-
-// -------------------------------------------------
-// core_filename_ends_with - does the given
-// filename end with the specified extension?
-// -------------------------------------------------
-
-bool core_filename_ends_with(std::string_view filename, std::string_view extension) noexcept
-{
-	auto namelen = filename.length();
-	auto extlen = extension.length();
-
-	// first if the extension is bigger than the name, we definitely don't match
-	bool matches = namelen >= extlen;
-
-	// work backwards checking for a match
-	while (matches && extlen > 0 && namelen > 0)
-	{
-		if (tolower((uint8_t)filename[--namelen]) != tolower((uint8_t)extension[--extlen]))
-			matches = false;
-	}
-
-	return matches;
-}

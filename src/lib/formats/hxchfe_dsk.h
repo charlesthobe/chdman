@@ -47,44 +47,59 @@ public:
 
 	hfe_format();
 
-	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) override;
-	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image) override;
-	virtual bool save(util::random_read_write &io, const std::vector<uint32_t> &variants, floppy_image *image) override;
+	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const override;
+	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const override;
+	virtual bool save(util::random_read_write &io, const std::vector<uint32_t> &variants, const floppy_image &image) const override;
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
-	virtual bool supports_save() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
+	virtual bool supports_save() const noexcept override;
 
-	void set_floppy_mode(floppymode_t mode) { m_selected_mode = mode; }
-	void set_encoding(encoding_t enc) { m_selected_encoding = enc; }
-
-private:
-	void generate_track_from_hfe_bitstream(int track, int head, int samplelength, const uint8_t *trackbuf, int track_end, floppy_image *image);
-	void generate_hfe_bitstream_from_track(int track, int head, int& samplelength, encoding_t& encoding, uint8_t *trackbuf, int track_end, floppy_image *image);
-
-	// Header fields from the HFE format
-	int m_cylinders;                 // Number of track in the file
-	int m_heads;                     // Number of valid side
-	encoding_t m_track_encoding;     // Track Encoding mode
-	int m_bit_rate;                  // Bitrate in Kbit/s (max: 500)
-	int m_floppy_rpm;                // Rotation per minute
-	floppymode_t m_interface_mode;   // Floppy interface mode.
-
+protected:
+	// Format parameters that can be overridden by subclasses
+	bool m_standard_track_count;
+	int  m_samplerate;
+	int  m_rpm;
 	bool m_write_allowed;
 	bool m_single_step;
-	bool m_track0s0_has_altencoding;
-	encoding_t  m_track0s0_encoding; // alternate track_encoding for track 0 Side 0
-	bool m_track0s1_has_altencoding;
-	encoding_t  m_track0s1_encoding; // alternate track_encoding for track 0 Side 1
+	floppymode_t m_floppymode;
+	encoding_t m_encoding;
 
-	int m_cyl_offset[256];
-	int m_cyl_length[256];
+private:
+	// Header fields from the HFE format
+	struct header_info
+	{
+		int cylinders = 0;                                // Number of track in the file
+		int heads = 0;                                    // Number of valid side
+		encoding_t track_encoding = UNKNOWN_ENCODING;     // Track Encoding mode
+		int sample_rate = 0;                              // Sample rate in K/s (max: 500)
+		floppymode_t interface_mode = DISABLE_FLOPPYMODE; // Floppy interface mode.
+		int track_list_offset = 0;
 
-	floppymode_t m_selected_mode;
-	encoding_t m_selected_encoding;
+		bool write_allowed = true;
+		bool single_step = true;
+		bool track0s0_has_altencoding = false;
+		encoding_t  track0s0_encoding = UNKNOWN_ENCODING; // alternative track_encoding for track 0 Side 0
+		bool track0s1_has_altencoding = false;
+		encoding_t  track0s1_encoding = UNKNOWN_ENCODING; // alternative track_encoding for track 0 Side 1
+	};
+
+	struct lut_entry
+	{
+		lut_entry(int _off, int _len) { offset = _off; length = _len; }
+
+		int offset;
+		int length;
+	};
+
+	void generate_track_from_hfe_bitstream(int cyl, int head, int samplelength, const uint8_t *trackbuf, int track_end, floppy_image &image) const;
+	void generate_hfe_bitstream_from_track(int cyl, int head, long cyltime, int samplelength, uint8_t *trackbuf, int track_end, const floppy_image &image) const;
+
+	bool eval_header(header_info& header, uint8_t* headerbytes, int drive_cylinders) const;
+	int determine_cell_size(const std::vector<uint32_t> &tbuf) const;
 };
 
-extern const floppy_format_type FLOPPY_HFE_FORMAT;
+extern const hfe_format FLOPPY_HFE_FORMAT;
 
 #endif // MAME_FORMATS_HXCHFE_DSK_H

@@ -9,7 +9,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/3rdparty
     ${CMAKE_SOURCE_DIR}/3rdparty/expat/lib
     ${CMAKE_SOURCE_DIR}/3rdparty/zlib
-    ${CMAKE_SOURCE_DIR}/3rdparty/libflac/include
+    ${CMAKE_SOURCE_DIR}/3rdparty/flac/include
     ${CMAKE_SOURCE_DIR}/3rdparty/utf8proc
 )
 
@@ -19,6 +19,8 @@ add_compile_definitions(
 
 add_library(utils STATIC
     ${utils_dir}/abi.h
+    ${utils_dir}/aes256cbc.cpp
+    ${utils_dir}/aes256cbc.h
     ${utils_dir}/avhuff.cpp
     ${utils_dir}/avhuff.h
     ${utils_dir}/aviio.cpp
@@ -31,8 +33,6 @@ add_library(utils STATIC
     ${utils_dir}/cdrom.h
     ${utils_dir}/chd.cpp
     ${utils_dir}/chd.h
-    ${utils_dir}/chdcd.cpp
-    ${utils_dir}/chdcd.h
     ${utils_dir}/chdcodec.cpp
     ${utils_dir}/chdcodec.h
     ${utils_dir}/client_http.hpp
@@ -53,6 +53,8 @@ add_library(utils STATIC
     ${utils_dir}/delegate.h
     ${utils_dir}/disasmintf.cpp
     ${utils_dir}/disasmintf.h
+    ${utils_dir}/dvdrom.cpp
+    ${utils_dir}/dvdrom.h
     ${utils_dir}/dynamicclass.cpp
     ${utils_dir}/dynamicclass.h
     ${utils_dir}/dynamicclass.ipp
@@ -80,10 +82,14 @@ add_library(utils STATIC
     ${utils_dir}/lrucache.h
     ${utils_dir}/md5.cpp
     ${utils_dir}/md5.h
+    ${utils_dir}/mfpresolve.cpp
+    ${utils_dir}/mfpresolve.h
     ${utils_dir}/msdib.cpp
     ${utils_dir}/msdib.h
+    ${utils_dir}/multibyte.h
     ${utils_dir}/nanosvg.cpp
     ${utils_dir}/nanosvg.h
+    ${utils_dir}/notifier.h
     ${utils_dir}/opresolv.cpp
     ${utils_dir}/opresolv.h
     ${utils_dir}/options.cpp
@@ -98,18 +104,24 @@ add_library(utils STATIC
     ${utils_dir}/plaparse.h
     ${utils_dir}/png.cpp
     ${utils_dir}/png.h
+    ${utils_dir}/server_http_impl.hpp
     ${utils_dir}/server_http.hpp
     ${utils_dir}/server_https.hpp
+    ${utils_dir}/server_ws_impl.hpp
     ${utils_dir}/server_ws.hpp
     ${utils_dir}/server_wss.hpp
+    ${utils_dir}/simh_tape_file.cpp
+    ${utils_dir}/simh_tape_file.h
     ${utils_dir}/strformat.cpp
     ${utils_dir}/strformat.h
+    ${utils_dir}/tape_file_interface.h
     ${utils_dir}/timeconv.cpp
     ${utils_dir}/timeconv.h
     ${utils_dir}/unicode.cpp
     ${utils_dir}/unicode.h
     ${utils_dir}/unzip.cpp
     ${utils_dir}/unzip.h
+    ${utils_dir}/utf8.h
     ${utils_dir}/un7z.cpp
     ${utils_dir}/utilfwd.h
     ${utils_dir}/vbiparse.cpp

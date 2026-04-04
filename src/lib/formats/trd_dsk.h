@@ -18,15 +18,15 @@ class trd_format : public wd177x_format {
 public:
 	trd_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
-	virtual int find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) override;
+	virtual int find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const override;
 };
 
-extern const floppy_format_type FLOPPY_TRD_FORMAT;
+extern const trd_format FLOPPY_TRD_FORMAT;
 
 #endif // MAME_FORMATS_TRD_DSK_H

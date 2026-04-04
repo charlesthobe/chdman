@@ -2,7 +2,7 @@
 // copyright-holders:Curt Coder
 /*********************************************************************
 
-    formats/d81_dsk.c
+    formats/d81_dsk.cpp
 
     Commodore 1581 disk image format
 
@@ -79,17 +79,17 @@ d81_format::d81_format() : wd177x_format(formats)
 {
 }
 
-const char *d81_format::name() const
+const char *d81_format::name() const noexcept
 {
 	return "d81";
 }
 
-const char *d81_format::description() const
+const char *d81_format::description() const noexcept
 {
 	return "Commodore 1581 disk image";
 }
 
-const char *d81_format::extensions() const
+const char *d81_format::extensions() const noexcept
 {
 	return "d81";
 }
@@ -115,7 +115,7 @@ const d81_format::format d81_format::formats[] = {
 	{}
 };
 
-floppy_image_format_t::desc_e* d81_format::get_desc_mfm(const format &f, int &current_size, int &end_gap_index)
+floppy_image_format_t::desc_e* d81_format::get_desc_mfm(const format &f, int &current_size, int &end_gap_index) const
 {
 	static floppy_image_format_t::desc_e desc[25] = {
 	/* 00 */ { MFM, 0x4e, f.gap_1 },
@@ -159,4 +159,4 @@ floppy_image_format_t::desc_e* d81_format::get_desc_mfm(const format &f, int &cu
 	return desc;
 }
 
-const floppy_format_type FLOPPY_D81_FORMAT = &floppy_image_format_creator<d81_format>;
+const d81_format FLOPPY_D81_FORMAT;

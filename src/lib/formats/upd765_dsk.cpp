@@ -2,7 +2,7 @@
 // copyright-holders:Olivier Galibert
 /*********************************************************************
 
-    formats/upd765_dsk.h
+    formats/upd765_dsk.cpp
 
     helper for simple upd765-formatted disk images
 
@@ -17,7 +17,7 @@
 #include <cstring>
 
 
-upd765_format::upd765_format(const format *_formats) : file_header_skip_bytes(0), file_footer_skip_bytes(0), formats(_formats)
+upd765_format::upd765_format(const format *_formats) : formats(_formats)
 {
 }
 
@@ -34,18 +34,18 @@ int upd765_format::find_size(util::random_read &io, uint32_t form_factor, const 
 		if(!variants.empty() && !has_variant(variants, f.variant))
 			continue;
 
-		if(size == file_header_skip_bytes + (uint64_t) compute_track_size(f) * f.track_count * f.head_count + file_footer_skip_bytes)
+		if(size == compute_track_size(f) * f.track_count * f.head_count)
 			return i;
 	}
 	return -1;
 }
 
-int upd765_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int upd765_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	int type = find_size(io, form_factor, variants);
 
 	if(type != -1)
-		return 50;
+		return FIFID_SIZE;
 	return 0;
 }
 
@@ -85,7 +85,7 @@ void upd765_format::build_sector_description(const format &f, uint8_t *sectdata,
 	}
 }
 
-floppy_image_format_t::desc_e* upd765_format::get_desc_fm(const format &f, int &current_size, int &end_gap_index)
+floppy_image_format_t::desc_e* upd765_format::get_desc_fm(const format &f, int &current_size, int &end_gap_index) const
 {
 	static floppy_image_format_t::desc_e desc[26] = {
 		/* 00 */ { FM, 0xff, f.gap_4a },
@@ -130,7 +130,7 @@ floppy_image_format_t::desc_e* upd765_format::get_desc_fm(const format &f, int &
 	return desc;
 }
 
-floppy_image_format_t::desc_e* upd765_format::get_desc_mfm(const format &f, int &current_size, int &end_gap_index)
+floppy_image_format_t::desc_e* upd765_format::get_desc_mfm(const format &f, int &current_size, int &end_gap_index) const
 {
 	static floppy_image_format_t::desc_e desc[29] = {
 		/* 00 */ { MFM, 0x4e, 0 },
@@ -184,7 +184,7 @@ floppy_image_format_t::desc_e* upd765_format::get_desc_mfm(const format &f, int 
 	return desc;
 }
 
-bool upd765_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool upd765_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
 	int type = find_size(io, form_factor, variants);
 	if(type == -1)
@@ -193,7 +193,7 @@ bool upd765_format::load(util::random_read &io, uint32_t form_factor, const std:
 	// format shouldn't exceed image geometry
 	const format &f = formats[type];
 	int img_tracks, img_heads;
-	image->get_maximal_geometry(img_tracks, img_heads);
+	image.get_maximal_geometry(img_tracks, img_heads);
 	if (f.track_count > img_tracks || f.head_count > img_heads)
 		return false;
 
@@ -231,22 +231,21 @@ bool upd765_format::load(util::random_read &io, uint32_t form_factor, const std:
 	for(int track=0; track < f.track_count; track++)
 		for(int head=0; head < f.head_count; head++) {
 			build_sector_description(f, sectdata, sectors, track, head);
-			size_t actual;
-			io.read_at(file_header_skip_bytes + (track*f.head_count + head)*track_size, sectdata, track_size, actual);
+			/*auto const [err, actual] =*/ read_at(io, (track*f.head_count + head)*track_size, sectdata, track_size); // FIXME: check for errors and premature EOF
 			generate_track(desc, track, head, sectors, f.sector_count, total_size, image);
 		}
 
-	image->set_form_variant(f.form_factor, f.variant);
+	image.set_form_variant(f.form_factor, f.variant);
 
 	return true;
 }
 
-bool upd765_format::supports_save() const
+bool upd765_format::supports_save() const noexcept
 {
 	return true;
 }
 
-bool upd765_format::save(util::random_read_write &io, const std::vector<uint32_t> &variants, floppy_image *image)
+bool upd765_format::save(util::random_read_write &io, const std::vector<uint32_t> &variants, const floppy_image &image) const
 {
 	// Count the number of formats
 	int formats_count;
@@ -266,8 +265,8 @@ bool upd765_format::save(util::random_read_write &io, const std::vector<uint32_t
 		int cur_cell_size = 0;
 		candidates.clear();
 		for(int i=0; i != formats_count; i++) {
-			if(image->get_form_factor() == floppy_image::FF_UNKNOWN ||
-				image->get_form_factor() == formats[i].form_factor) {
+			if(image.get_form_factor() == floppy_image::FF_UNKNOWN ||
+				image.get_form_factor() == formats[i].form_factor) {
 				if(formats[i].cell_size == cur_cell_size)
 					candidates.push_back(i);
 				else if((!cur_cell_size || formats[i].cell_size < cur_cell_size) &&
@@ -304,7 +303,7 @@ bool upd765_format::save(util::random_read_write &io, const std::vector<uint32_t
 
 		// Otherwise, find the best
 		int tracks, heads;
-		image->get_actual_geometry(tracks, heads);
+		image.get_actual_geometry(tracks, heads);
 		chosen_candidate = candidates[0];
 		for(unsigned int i=1; i != candidates.size(); i++) {
 			const format &cc = formats[chosen_candidate];
@@ -345,25 +344,24 @@ bool upd765_format::save(util::random_read_write &io, const std::vector<uint32_t
 	if(chosen_candidate == -1)
 		chosen_candidate = 0;
 
-
 	const format &f = formats[chosen_candidate];
 	int track_size = compute_track_size(f);
 
 	uint8_t sectdata[40*512];
 	desc_s sectors[40];
 
-	for(int track=0; track < f.track_count; track++)
+	for(int track=0; track < f.track_count; track++) {
 		for(int head=0; head < f.head_count; head++) {
 			build_sector_description(f, sectdata, sectors, track, head);
 			extract_sectors(image, f, sectors, track, head);
-			size_t actual;
-			io.write_at((track*f.head_count + head)*track_size, sectdata, track_size, actual);
+			/*auto const [err, actual] =*/ write_at(io, (track*f.head_count + head)*track_size, sectdata, track_size); // FIXME: check for errors
 		}
+	}
 
 	return true;
 }
 
-void upd765_format::check_compatibility(floppy_image *image, std::vector<int> &candidates)
+void upd765_format::check_compatibility(const floppy_image &image, std::vector<int> &candidates) const
 {
 	// Extract the sectors
 	auto bitstream = generate_bitstream_from_track(0, 0, formats[candidates[0]].cell_size, image);
@@ -413,7 +411,7 @@ void upd765_format::check_compatibility(floppy_image *image, std::vector<int> &c
 }
 
 
-void upd765_format::extract_sectors(floppy_image *image, const format &f, desc_s *sdesc, int track, int head)
+void upd765_format::extract_sectors(const floppy_image &image, const format &f, desc_s *sdesc, int track, int head) const
 {
 	// Extract the sectors
 	auto bitstream = generate_bitstream_from_track(track, head, f.cell_size, image);
@@ -436,7 +434,7 @@ void upd765_format::extract_sectors(floppy_image *image, const format &f, desc_s
 
 		else if(sectors[ds.sector_id].size() < ds.size) {
 			memcpy((void *)ds.data, sectors[ds.sector_id].data(), sectors[ds.sector_id].size());
-			memset((uint8_t *)ds.data + sectors[ds.sector_id].size(), 0, sectors[ds.sector_id].size() - ds.size);
+			memset((uint8_t *)ds.data + sectors[ds.sector_id].size(), 0, ds.size - sectors[ds.sector_id].size());
 
 		} else
 			memcpy((void *)ds.data, sectors[ds.sector_id].data(), ds.size);

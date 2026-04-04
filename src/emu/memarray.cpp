@@ -90,11 +90,6 @@ void memory_array::set(void *base, u32 bytes, int membits, endianness_t endianne
 //  set - additional setter variants
 //-------------------------------------------------
 
-void memory_array::set(const address_space &space, void *base, u32 bytes, int bpe)
-{
-	set(base, bytes, space.data_width(), space.endianness(), bpe);
-}
-
 void memory_array::set(const memory_share &share, int bpe)
 {
 	set(share.ptr(), share.bytes(), share.bitwidth(), share.endianness(), bpe);
@@ -139,8 +134,8 @@ void memory_array::write8_to_32le(int index, u32 data) { reinterpret_cast<u8 *>(
 u32 memory_array::read8_from_32be(int index) const { return reinterpret_cast<u8 *>(m_base)[BYTE4_XOR_BE(index)]; }
 void memory_array::write8_to_32be(int index, u32 data) { reinterpret_cast<u8 *>(m_base)[BYTE4_XOR_BE(index)] = data; }
 
-u32 memory_array::read8_from_64le(int index) const { return reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_BE(index)]; }
-void memory_array::write8_to_64le(int index, u32 data) { reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_BE(index)] = data; }
+u32 memory_array::read8_from_64le(int index) const { return reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_LE(index)]; }
+void memory_array::write8_to_64le(int index, u32 data) { reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_LE(index)] = data; }
 u32 memory_array::read8_from_64be(int index) const { return reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_BE(index)]; }
 void memory_array::write8_to_64be(int index, u32 data) { reinterpret_cast<u8 *>(m_base)[BYTE8_XOR_BE(index)] = data; }
 

@@ -2,7 +2,7 @@
 // copyright-holders:Olivier Galibert
 /*********************************************************************
 
-    formats/asst128_dsk.c
+    formats/asst128_dsk.cpp
 
     asst128 format
 
@@ -14,17 +14,17 @@ asst128_format::asst128_format() : upd765_format(formats)
 {
 }
 
-const char *asst128_format::name() const
+const char *asst128_format::name() const noexcept
 {
 	return "asst128";
 }
 
-const char *asst128_format::description() const
+const char *asst128_format::description() const noexcept
 {
 	return "ASST128 disk image";
 }
 
-const char *asst128_format::extensions() const
+const char *asst128_format::extensions() const noexcept
 {
 	return "img";
 }
@@ -38,4 +38,4 @@ const asst128_format::format asst128_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_ASST128_FORMAT = &floppy_image_format_creator<asst128_format>;
+const asst128_format FLOPPY_ASST128_FORMAT;

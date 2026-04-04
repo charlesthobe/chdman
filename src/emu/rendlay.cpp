@@ -13,6 +13,8 @@
 #include "rendlay.h"
 
 #include "emuopts.h"
+#include "fileio.h"
+#include "main.h"
 #include "rendfont.h"
 #include "rendutil.h"
 #include "video/rgbutil.h"
@@ -57,6 +59,9 @@
 
 // screenless layouts
 #include "noscreens.lh"
+
+// single screen layouts
+#include "monitors.lh"
 
 // dual screen layouts
 #include "dualhsxs.lh"
@@ -220,12 +225,18 @@ private:
 			{
 				if (m_float_valid)
 				{
-					m_text = std::to_string(m_float);
+					std::ostringstream stream;
+					stream.imbue(std::locale::classic());
+					stream << m_float;
+					m_text = std::move(stream).str();
 					m_text_valid = true;
 				}
 				else if (m_int_valid)
 				{
-					m_text = std::to_string(m_int);
+					std::ostringstream stream;
+					stream.imbue(std::locale::classic());
+					stream << m_int;
+					m_text = std::move(stream).str();
 					m_text_valid = true;
 				}
 			}
@@ -1246,13 +1257,9 @@ int get_blend_mode(emu::render::detail::view_environment &env, util::xml::data_n
 layout_element::make_component_map const layout_element::s_make_component{
 	{ "image",         &make_component<image_component>         },
 	{ "text",          &make_component<text_component>          },
-	{ "dotmatrix",     &make_dotmatrix_component<8>             },
-	{ "dotmatrix5dot", &make_dotmatrix_component<5>             },
-	{ "dotmatrixdot",  &make_dotmatrix_component<1>             },
 	{ "simplecounter", &make_component<simplecounter_component> },
 	{ "reel",          &make_component<reel_component>          },
 	{ "led7seg",       &make_component<led7seg_component>       },
-	{ "led8seg_gts1",  &make_component<led8seg_gts1_component>  },
 	{ "led14seg",      &make_component<led14seg_component>      },
 	{ "led14segsc",    &make_component<led14segsc_component>    },
 	{ "led16seg",      &make_component<led16seg_component>      },
@@ -1270,6 +1277,7 @@ layout_element::layout_element(environment &env, util::xml::data_node const &ele
 	, m_defstate(env.get_attribute_int(elemnode, "defstate", -1))
 	, m_statemask(0)
 	, m_foldhigh(false)
+	, m_invalidated(false)
 {
 	// parse components in order
 	bool first = true;
@@ -1640,6 +1648,17 @@ render_texture *layout_element::state_texture(int state)
 
 
 //-------------------------------------------------
+//  set_draw_callback - set handler called after
+//  drawing components
+//-------------------------------------------------
+
+void layout_element::set_draw_callback(draw_delegate &&handler)
+{
+	m_draw = std::move(handler);
+}
+
+
+//-------------------------------------------------
 //  preload - perform expensive loading upfront
 //  for all components
 //-------------------------------------------------
@@ -1648,6 +1667,25 @@ void layout_element::preload()
 {
 	for (component::ptr const &curcomp : m_complist)
 		curcomp->preload(machine());
+}
+
+
+//-------------------------------------------------
+//  prepare - perform additional tasks before
+//  drawing a frame
+//-------------------------------------------------
+
+void layout_element::prepare()
+{
+	if (m_invalidated)
+	{
+		m_invalidated = false;
+		for (texture &tex : m_elemtex)
+		{
+			machine().render().texture_free(tex.m_texture);
+			tex.m_texture = nullptr;
+		}
+	}
 }
 
 
@@ -1667,6 +1705,10 @@ void layout_element::element_scale(bitmap_argb32 &dest, bitmap_argb32 &source, c
 		if ((elemtex.m_state & curcomp->statemask()) == curcomp->stateval())
 			curcomp->draw(elemtex.m_element->machine(), dest, elemtex.m_state);
 	}
+
+	// if there's a callback for additional drawing, invoke it
+	if (!elemtex.m_element->m_draw.isnull())
+		elemtex.m_element->m_draw(elemtex.m_state, dest);
 }
 
 
@@ -1748,10 +1790,10 @@ private:
 			{
 				u8 const *const src(reinterpret_cast<u8 const *>(dst));
 				rgb_t const d(
-						u8((float(src[3]) * c.a) + 0.5),
-						u8((float(src[0]) * c.r) + 0.5),
-						u8((float(src[1]) * c.g) + 0.5),
-						u8((float(src[2]) * c.b) + 0.5));
+						u8((float(src[3]) * c.a) + 0.5F),
+						u8((float(src[0]) * c.r) + 0.5F),
+						u8((float(src[1]) * c.g) + 0.5F),
+						u8((float(src[2]) * c.b) + 0.5F));
 				*dst = d;
 				havealpha = havealpha || (d.a() < 255U);
 			}
@@ -2027,17 +2069,12 @@ private:
 			return;
 		}
 		svgbuf[len] = '\0';
-		for (char *ptr = svgbuf.get(); len; )
+		size_t actual;
+		std::tie(filerr, actual) = read(file, svgbuf.get(), len);
+		if (filerr || (actual < len))
 		{
-			size_t read;
-			filerr = file.read(ptr, size_t(len), read);
-			if (filerr || !read)
-			{
-				osd_printf_warning("Error reading component image '%s'\n", m_imagefile);
-				return;
-			}
-			ptr += read;
-			len -= read;
+			osd_printf_warning("Error reading component image '%s'\n", m_imagefile);
+			return;
 		}
 		parse_svg(svgbuf.get());
 	}
@@ -2110,14 +2147,17 @@ protected:
 			for (u32 y = bounds.top(); y <= bounds.bottom(); ++y)
 				std::fill_n(&dest.pix(y, bounds.left()), width, f);
 		}
-		else if (c.a)
+		else
 		{
-			// compute premultiplied colors
+			// compute premultiplied color
 			u32 const a(c.a * 255.0F);
 			u32 const r(u32(c.r * (255.0F * 255.0F)) * a);
 			u32 const g(u32(c.g * (255.0F * 255.0F)) * a);
 			u32 const b(u32(c.b * (255.0F * 255.0F)) * a);
 			u32 const inva(255 - a);
+
+			if (!a)
+				return;
 
 			// we're translucent, add in the destination pixel contribution
 			for (u32 y = bounds.top(); y <= bounds.bottom(); ++y)
@@ -2148,10 +2188,11 @@ public:
 		render_color const c(color(state));
 		u32 const f(rgb_t(u8(c.r * 255), u8(c.g * 255), u8(c.b * 255)));
 		u32 const a(c.a * 255.0F);
-		u32 const r(c.r * c.a * (255.0F * 255.0F * 255.0F));
-		u32 const g(c.g * c.a * (255.0F * 255.0F * 255.0F));
-		u32 const b(c.b * c.a * (255.0F * 255.0F * 255.0F));
+		u32 const r(c.r * (255.0F * 255.0F) * a);
+		u32 const g(c.g * (255.0F * 255.0F) * a);
+		u32 const b(c.b * (255.0F * 255.0F) * a);
 		u32 const inva(255 - a);
+
 		if (!a)
 			return;
 
@@ -2261,17 +2302,13 @@ public:
 					if ((x >= minfill) && (x <= maxfill))
 					{
 						if (255 <= a)
-						{
 							dst = std::fill_n(dst, maxfill - x + 1, f);
-							x = maxfill;
-						}
 						else
-						{
 							while (x++ <= maxfill)
 								alpha_blend(*dst++, a, r, g, b, inva);
-							--x;
-						}
+
 						--dst;
+						x = maxfill;
 					}
 					else
 					{
@@ -2373,17 +2410,13 @@ public:
 					if ((x >= minfill) && (x <= maxfill))
 					{
 						if (255 <= a)
-						{
 							dst = std::fill_n(dst, maxfill - x + 1, f);
-							x = maxfill;
-						}
 						else
-						{
 							while (x++ <= maxfill)
 								alpha_blend(*dst++, a, r, g, b, inva);
-							--x;
-						}
+
 						--dst;
+						x = maxfill;
 					}
 					else
 					{
@@ -2449,7 +2482,7 @@ protected:
 	// overrides
 	virtual void draw_aligned(running_machine &machine, bitmap_argb32 &dest, const rectangle &bounds, int state) override
 	{
-		auto font = machine.render().font_alloc("default");
+		auto font = machine.render().font_alloc(machine.options().artwork_font());
 		draw_text(*font, dest, bounds, m_string, m_textalign, color(state));
 	}
 
@@ -2515,74 +2548,6 @@ protected:
 
 		// decimal point
 		draw_segment_decimal(tempbitmap, bmwidth + segwidth/2, bmheight - segwidth/2, segwidth, BIT(state, 7) ? onpen : offpen);
-
-		// resample to the target size
-		render_resample_argb_bitmap_hq(dest, tempbitmap, color(state));
-	}
-};
-
-
-// 8-segment fluorescent (Gottlieb System 1)
-class layout_element::led8seg_gts1_component : public component
-{
-public:
-	// construction/destruction
-	led8seg_gts1_component(environment &env, util::xml::data_node const &compnode)
-		: component(env, compnode)
-	{
-	}
-
-protected:
-	// overrides
-	virtual int maxstate() const override { return 255; }
-
-	virtual void draw_aligned(running_machine &machine, bitmap_argb32 &dest, const rectangle &bounds, int state) override
-	{
-		rgb_t const onpen = rgb_t(0xff, 0xff, 0xff, 0xff);
-		rgb_t const offpen = rgb_t(0x20, 0xff, 0xff, 0xff);
-		rgb_t const backpen = rgb_t(0x00, 0x00, 0x00, 0x00);
-
-		// sizes for computation
-		int const bmwidth = 250;
-		int const bmheight = 400;
-		int const segwidth = 40;
-		int const skewwidth = 40;
-
-		// allocate a temporary bitmap for drawing
-		bitmap_argb32 tempbitmap(bmwidth + skewwidth, bmheight);
-		tempbitmap.fill(backpen);
-
-		// top bar
-		draw_segment_horizontal(tempbitmap, 0 + 2*segwidth/3, bmwidth - 2*segwidth/3, 0 + segwidth/2, segwidth, (state & (1 << 0)) ? onpen : offpen);
-
-		// top-right bar
-		draw_segment_vertical(tempbitmap, 0 + 2*segwidth/3, bmheight/2 - segwidth/3, bmwidth - segwidth/2, segwidth, (state & (1 << 1)) ? onpen : offpen);
-
-		// bottom-right bar
-		draw_segment_vertical(tempbitmap, bmheight/2 + segwidth/3, bmheight - 2*segwidth/3, bmwidth - segwidth/2, segwidth, (state & (1 << 2)) ? onpen : offpen);
-
-		// bottom bar
-		draw_segment_horizontal(tempbitmap, 0 + 2*segwidth/3, bmwidth - 2*segwidth/3, bmheight - segwidth/2, segwidth, (state & (1 << 3)) ? onpen : offpen);
-
-		// bottom-left bar
-		draw_segment_vertical(tempbitmap, bmheight/2 + segwidth/3, bmheight - 2*segwidth/3, 0 + segwidth/2, segwidth, (state & (1 << 4)) ? onpen : offpen);
-
-		// top-left bar
-		draw_segment_vertical(tempbitmap, 0 + 2*segwidth/3, bmheight/2 - segwidth/3, 0 + segwidth/2, segwidth, (state & (1 << 5)) ? onpen : offpen);
-
-		// horizontal bars
-		draw_segment_horizontal(tempbitmap, 0 + 2*segwidth/3, 2*bmwidth/3 - 2*segwidth/3, bmheight/2, segwidth, (state & (1 << 6)) ? onpen : offpen);
-		draw_segment_horizontal(tempbitmap, 0 + 2*segwidth/3 + bmwidth/2, bmwidth - 2*segwidth/3, bmheight/2, segwidth, (state & (1 << 6)) ? onpen : offpen);
-
-		// vertical bars
-		draw_segment_vertical(tempbitmap, 0 + segwidth/3 - 8, bmheight/2 - segwidth/3 + 2, 2*bmwidth/3 - segwidth/2 - 4, segwidth + 8, backpen);
-		draw_segment_vertical(tempbitmap, 0 + segwidth/3, bmheight/2 - segwidth/3, 2*bmwidth/3 - segwidth/2 - 4, segwidth, (state & (1 << 7)) ? onpen : offpen);
-
-		draw_segment_vertical(tempbitmap, bmheight/2 + segwidth/3 - 2, bmheight - segwidth/3 + 8, 2*bmwidth/3 - segwidth/2 - 4, segwidth + 8, backpen);
-		draw_segment_vertical(tempbitmap, bmheight/2 + segwidth/3, bmheight - segwidth/3, 2*bmwidth/3 - segwidth/2 - 4, segwidth, (state & (1 << 7)) ? onpen : offpen);
-
-		// apply skew
-		apply_skew(tempbitmap, 40);
 
 		// resample to the target size
 		render_resample_argb_bitmap_hq(dest, tempbitmap, color(state));
@@ -3079,47 +3044,6 @@ protected:
 };
 
 
-// row of dots for a dotmatrix
-class layout_element::dotmatrix_component : public component
-{
-public:
-	// construction/destruction
-	dotmatrix_component(int dots, environment &env, util::xml::data_node const &compnode)
-		: component(env, compnode)
-		, m_dots(dots)
-	{
-	}
-
-protected:
-	// overrides
-	virtual int maxstate() const override { return (1 << m_dots) - 1; }
-
-	virtual void draw_aligned(running_machine &machine, bitmap_argb32 &dest, const rectangle &bounds, int state) override
-	{
-		const rgb_t onpen = rgb_t(0xff, 0xff, 0xff, 0xff);
-		const rgb_t offpen = rgb_t(0xff, 0x20, 0x20, 0x20);
-
-		// sizes for computation
-		int bmheight = 300;
-		int dotwidth = 250;
-
-		// allocate a temporary bitmap for drawing
-		bitmap_argb32 tempbitmap(dotwidth*m_dots, bmheight);
-		tempbitmap.fill(rgb_t(0xff, 0x00, 0x00, 0x00));
-
-		for (int i = 0; i < m_dots; i++)
-			draw_segment_decimal(tempbitmap, ((dotwidth / 2) + (i * dotwidth)), bmheight / 2, dotwidth, BIT(state, i) ? onpen : offpen);
-
-		// resample to the target size
-		render_resample_argb_bitmap_hq(dest, tempbitmap, color(state));
-	}
-
-private:
-	// internal state
-	int m_dots;
-};
-
-
 // simple counter
 class layout_element::simplecounter_component : public component
 {
@@ -3139,7 +3063,7 @@ protected:
 
 	virtual void draw_aligned(running_machine &machine, bitmap_argb32 &dest, const rectangle &bounds, int state) override
 	{
-		auto font = machine.render().font_alloc("default");
+		auto font = machine.render().font_alloc(machine.options().artwork_font());
 		draw_text(*font, dest, bounds, string_format("%0*d", m_digits, state), m_textalign, color(state));
 	}
 
@@ -3163,6 +3087,8 @@ public:
 		, m_searchpath(env.search_path() ? env.search_path() : "")
 		, m_dirname(env.directory_name() ? env.directory_name() : "")
 	{
+		osd_printf_warning("Warning: layout file contains deprecated reel component\n");
+
 		std::string_view symbollist = env.get_attribute_string(compnode, "symbollist", "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15");
 
 		// split out position names from string and figure out our number of symbols
@@ -3219,7 +3145,7 @@ protected:
 		// shift the reels a bit based on this param, allows fine tuning
 		int use_state = (state + m_stateoffset) % max_state_used;
 
-		// compute premultiplied colors
+		// compute premultiplied color
 		render_color const c(color(state));
 		u32 const r = c.r * 255.0f;
 		u32 const g = c.g * 255.0f;
@@ -3231,7 +3157,7 @@ protected:
 
 		int ourheight = bounds.height();
 
-		auto font = machine.render().font_alloc("default");
+		auto font = machine.render().font_alloc(machine.options().artwork_font());
 		for (int fruit = 0;fruit<m_numstops;fruit++)
 		{
 			int basey;
@@ -3293,18 +3219,15 @@ protected:
 					bitmap_argb32 tempbitmap(dest.width(), dest.height());
 
 					// get the width of the string
-					float aspect = 1.0f;
-					s32 width;
-
-					while (1)
+					s32 width = font->string_width(ourheight / num_shown, 1.0f, m_stopnames[fruit]);
+					float aspect = 1.0;
+					if (width > bounds.width())
 					{
-						width = font->string_width(ourheight / num_shown, aspect, m_stopnames[fruit]);
-						if (width < bounds.width())
-							break;
-						aspect *= 0.9f;
+						aspect = float(bounds.width()) / float(width);
+						width = bounds.width();
 					}
 
-					s32 curx = bounds.left() + (bounds.width() - width) / 2;
+					float curx = bounds.left() + (bounds.width() - width) / 2.0f;
 
 					// loop over characters
 					std::string_view s = m_stopnames[fruit];
@@ -3331,7 +3254,7 @@ protected:
 								u32 *const d = &dest.pix(effy);
 								for (int x = 0; x < chbounds.width(); x++)
 								{
-									int effx = curx + x + chbounds.left();
+									int effx = int(curx) + x + chbounds.left();
 									if (effx >= bounds.left() && effx <= bounds.right())
 									{
 										u32 spix = rgb_t(src[x]).a();
@@ -3371,7 +3294,7 @@ private:
 		// shift the reels a bit based on this param, allows fine tuning
 		int use_state = (state + m_stateoffset) % max_state_used;
 
-		// compute premultiplied colors
+		// compute premultiplied color
 		render_color const c(color(state));
 		u32 const r = c.r * 255.0f;
 		u32 const g = c.g * 255.0f;
@@ -3383,7 +3306,7 @@ private:
 
 		int ourwidth = bounds.width();
 
-		auto font = machine.render().font_alloc("default");
+		auto font = machine.render().font_alloc(machine.options().artwork_font());
 		for (int fruit = 0;fruit<m_numstops;fruit++)
 		{
 			int basex;
@@ -3442,17 +3365,15 @@ private:
 				else // render text (fallback)
 				{
 					// get the width of the string
-					float aspect = 1.0f;
-					s32 width;
-					while (1)
+					s32 width = font->string_width(dest.height(), 1.0f, m_stopnames[fruit]);
+					float aspect = 1.0;
+					if (width > bounds.width())
 					{
-						width = font->string_width(dest.height(), aspect, m_stopnames[fruit]);
-						if (width < bounds.width())
-							break;
-						aspect *= 0.9f;
+						aspect = float(bounds.width()) / float(width);
+						width = bounds.width();
 					}
 
-					s32 curx = bounds.left();
+					float curx = bounds.left();
 
 					// allocate a temporary bitmap
 					bitmap_argb32 tempbitmap(dest.width(), dest.height());
@@ -3482,7 +3403,7 @@ private:
 								u32 *const d = &dest.pix(effy);
 								for (int x = 0; x < chbounds.width(); x++)
 								{
-									int effx = basex + curx + x;
+									int effx = basex + int(curx) + x;
 									if (effx >= bounds.left() && effx <= bounds.right())
 									{
 										u32 spix = rgb_t(src[x]).a();
@@ -3558,18 +3479,6 @@ layout_element::component::ptr layout_element::make_component(environment &env, 
 }
 
 
-//-------------------------------------------------
-//  make_component - create dotmatrix component
-//  with given vertical resolution
-//-------------------------------------------------
-
-template <int D>
-layout_element::component::ptr layout_element::make_dotmatrix_component(environment &env, util::xml::data_node const &compnode)
-{
-	return std::make_unique<dotmatrix_component>(D, env, compnode);
-}
-
-
 
 //**************************************************************************
 //  LAYOUT ELEMENT TEXTURE
@@ -3599,7 +3508,7 @@ layout_element::texture::texture(texture &&that) : texture()
 
 layout_element::texture::~texture()
 {
-	if (m_element != nullptr)
+	if (m_element)
 		m_element->machine().render().texture_free(m_texture);
 }
 
@@ -3801,26 +3710,18 @@ void layout_element::component::draw_text(
 		int align,
 		const render_color &color)
 {
-	// compute premultiplied colors
-	u32 const r(color.r * 255.0f);
-	u32 const g(color.g * 255.0f);
-	u32 const b(color.b * 255.0f);
-	u32 const a(color.a * 255.0f);
-
 	// get the width of the string
-	float aspect = 1.0f;
-	s32 width;
-
-	while (1)
+	s32 width = font.string_width(bounds.height(), 1.0f, str);
+	float aspect = 1.0;
+	if ((align == 3) || (width > bounds.width()))
 	{
-		width = font.string_width(bounds.height(), aspect, str);
-		if (width < bounds.width())
-			break;
-		aspect *= 0.9f;
+		if (width != 0)
+			aspect = float(bounds.width()) / float(width);
+		width = bounds.width();
 	}
 
 	// get alignment
-	s32 curx;
+	float curx;
 	switch (align)
 	{
 		// left
@@ -3830,12 +3731,17 @@ void layout_element::component::draw_text(
 
 		// right
 		case 2:
-			curx = bounds.right() - width;
+			curx = bounds.left() + bounds.width() - width;
+			break;
+
+		// stretch (aligned both left & right)
+		case 3:
+			curx = bounds.left();
 			break;
 
 		// default to center
 		default:
-			curx = bounds.left() + (bounds.width() - width) / 2;
+			curx = bounds.left() + (bounds.width() - width) / 2.0f;
 			break;
 	}
 
@@ -3865,18 +3771,13 @@ void layout_element::component::draw_text(
 				u32 *const d = &dest.pix(effy);
 				for (int x = 0; x < chbounds.width(); x++)
 				{
-					int effx = curx + x + chbounds.left();
+					int effx = int(curx) + x + chbounds.left();
 					if (effx >= bounds.left() && effx <= bounds.right())
 					{
 						u32 spix = rgb_t(src[x]).a();
 						if (spix != 0)
 						{
-							rgb_t dpix = d[effx];
-							u32 ta = (a * (spix + 1)) >> 8;
-							u32 tr = (r * ta + dpix.r() * (0x100 - ta)) >> 8;
-							u32 tg = (g * ta + dpix.g() * (0x100 - ta)) >> 8;
-							u32 tb = (b * ta + dpix.b() * (0x100 - ta)) >> 8;
-							d[effx] = rgb_t(tr, tg, tb);
+							alpha_blend(d[effx], color, spix / 255.0);
 						}
 					}
 				}
@@ -3965,7 +3866,7 @@ void layout_element::component::draw_segment_diagonal_1(bitmap_argb32 &dest, int
 {
 	// compute parameters
 	width *= 1.5;
-	float ratio = (maxy - miny - width) / (float)(maxx - minx);
+	float ratio = (maxy - miny - width) / float(maxx - minx);
 
 	// draw line
 	for (int x = minx; x < maxx; x++)
@@ -3990,7 +3891,7 @@ void layout_element::component::draw_segment_diagonal_2(bitmap_argb32 &dest, int
 {
 	// compute parameters
 	width *= 1.5;
-	float ratio = (maxy - miny - width) / (float)(maxx - minx);
+	float ratio = (maxy - miny - width) / float(maxx - minx);
 
 	// draw line
 	for (int x = minx; x < maxx; x++)
@@ -4014,14 +3915,14 @@ void layout_element::component::draw_segment_decimal(bitmap_argb32 &dest, int mi
 {
 	// compute parameters
 	width /= 2;
-	float ooradius2 = 1.0f / (float)(width * width);
+	float ooradius2 = 1.0f / float(width * width);
 
 	// iterate over y
 	for (u32 y = 0; y <= width; y++)
 	{
 		u32 *const d0 = &dest.pix(midy - y);
 		u32 *const d1 = &dest.pix(midy + y);
-		float xval = width * sqrt(1.0f - (float)(y * y) * ooradius2);
+		float xval = width * sqrt(1.0f - float(y * y) * ooradius2);
 		s32 left, right;
 
 		// compute left/right coordinates
@@ -4043,7 +3944,7 @@ void layout_element::component::draw_segment_comma(bitmap_argb32 &dest, int minx
 {
 	// compute parameters
 	width *= 1.5;
-	float ratio = (maxy - miny - width) / (float)(maxx - minx);
+	float ratio = (maxy - miny - width) / float(maxx - minx);
 
 	// draw line
 	for (int x = minx; x < maxx; x++)
@@ -4095,9 +3996,20 @@ layout_view::layout_view(
 	: m_effaspect(1.0f)
 	, m_name(make_name(env, viewnode))
 	, m_unqualified_name(env.get_attribute_string(viewnode, "name"))
+	, m_elemmap(elemmap)
 	, m_defvismask(0U)
 	, m_has_art(false)
+	, m_show_ptr(false)
+	, m_ptr_time_out(true) // FIXME: add attribute for this
+	, m_exp_show_ptr(-1)
 {
+	// check for explicit pointer display setting
+	if (viewnode.get_attribute_string_ptr("showpointers"))
+	{
+		m_show_ptr = env.get_attribute_bool(viewnode, "showpointers", false);
+		m_exp_show_ptr = m_show_ptr ? 1 : 0;
+	}
+
 	// parse the layout
 	m_expbounds.x0 = m_expbounds.y0 = m_expbounds.x1 = m_expbounds.y1 = 0;
 	view_environment local(env, m_name.c_str());
@@ -4145,7 +4057,7 @@ layout_view::layout_view(
 	}
 	if (!layers.marquees.empty())
 	{
-		m_vistoggles.emplace_back("Backdrops", mask);
+		m_vistoggles.emplace_back("Marquees", mask);
 		for (item &marquee : layers.marquees)
 			marquee.m_visibility_mask = mask;
 		m_defvismask |= mask;
@@ -4241,6 +4153,21 @@ bool layout_view::has_visible_screen(screen_device const &screen) const
 
 
 //-------------------------------------------------
+//  prepare_items - perform additional tasks
+//  before rendering a frame
+//-------------------------------------------------
+
+void layout_view::prepare_items()
+{
+	if (!m_prepare_items.isnull())
+		m_prepare_items();
+
+	for (auto &[name, element] : m_elemmap)
+		element.prepare();
+}
+
+
+//-------------------------------------------------
 //  recompute - recompute the bounds and aspect
 //  ratio of a view and all of its contained items
 //-------------------------------------------------
@@ -4260,6 +4187,7 @@ void layout_view::recompute(u32 visibility_mask, bool zoom_to_screen)
 	// loop over items and filter by visibility mask
 	bool first = true;
 	bool scrfirst = true;
+	bool haveinput = false;
 	for (item &curitem : m_items)
 	{
 		if ((visibility_mask & curitem.visibility_mask()) == curitem.visibility_mask())
@@ -4291,8 +4219,14 @@ void layout_view::recompute(u32 visibility_mask, bool zoom_to_screen)
 			// accumulate interactive elements
 			if (!curitem.clickthrough() || curitem.has_input())
 				m_interactive_items.emplace_back(curitem);
+			if (curitem.has_input())
+				haveinput = true;
 		}
 	}
+
+	// if show pointers isn't explicitly, update it based on visible items
+	if (0 > m_exp_show_ptr)
+		m_show_ptr = haveinput;
 
 	// if we have an explicit bounds, override it
 	if (m_expbounds.x1 > m_expbounds.x0)
@@ -4333,6 +4267,7 @@ void layout_view::recompute(u32 visibility_mask, bool zoom_to_screen)
 	// sort edges of interactive items
 	LOGMASKED(LOG_INTERACTIVE_ITEMS, "Recalculated view '%s' with %u interactive items\n",
 			name(), m_interactive_items.size());
+	std::reverse(m_interactive_items.begin(), m_interactive_items.end());
 	m_interactive_edges_x.reserve(m_interactive_items.size() * 2);
 	m_interactive_edges_y.reserve(m_interactive_items.size() * 2);
 	for (unsigned i = 0; m_interactive_items.size() > i; ++i)
@@ -4360,6 +4295,29 @@ void layout_view::recompute(u32 visibility_mask, bool zoom_to_screen)
 	// additional actions typically supplied by script
 	if (!m_recomputed.isnull())
 		m_recomputed();
+}
+
+
+//-------------------------------------------------
+//  set_show_pointers - set whether pointers
+//  should be displayed
+//-------------------------------------------------
+
+void layout_view::set_show_pointers(bool value) noexcept
+{
+	m_show_ptr = value;
+	m_exp_show_ptr = value ? 1 : 0;
+}
+
+
+//-------------------------------------------------
+//  set_pointers_time_out - set whether pointers
+//  should be hidden after inactivity
+//-------------------------------------------------
+
+void layout_view::set_hide_inactive_pointers(bool value) noexcept
+{
+	m_ptr_time_out = value;
 }
 
 
@@ -4393,6 +4351,50 @@ void layout_view::set_preload_callback(preload_delegate &&handler)
 void layout_view::set_recomputed_callback(recomputed_delegate &&handler)
 {
 	m_recomputed = std::move(handler);
+}
+
+
+//-------------------------------------------------
+//  set_pointer_updated_callback - set handler
+//  called for pointer input
+//-------------------------------------------------
+
+void layout_view::set_pointer_updated_callback(pointer_updated_delegate &&handler)
+{
+	m_pointer_updated = std::move(handler);
+}
+
+
+//-------------------------------------------------
+//  set_pointer_left_callback - set handler for
+//  pointer leaving normally
+//-------------------------------------------------
+
+void layout_view::set_pointer_left_callback(pointer_left_delegate &&handler)
+{
+	m_pointer_left = std::move(handler);
+}
+
+
+//-------------------------------------------------
+//  set_pointer_aborted_callback - set handler for
+//  pointer leaving abnormally
+//-------------------------------------------------
+
+void layout_view::set_pointer_aborted_callback(pointer_left_delegate &&handler)
+{
+	m_pointer_aborted = std::move(handler);
+}
+
+
+//-------------------------------------------------
+//  set_forget_pointers_callback - set handler for
+//  abandoning pointer input
+//-------------------------------------------------
+
+void layout_view::set_forget_pointers_callback(forget_pointers_delegate &&handler)
+{
+	m_forget_pointers = std::move(handler);
 }
 
 
@@ -5353,26 +5355,9 @@ layout_file::layout_file(
 		if (version != LAYOUT_VERSION)
 			throw layout_syntax_error(util::string_format("unsupported version %d", version));
 
-		// parse all the parameters, elements and groups
+		// parse all the parameters, elements, groups and views
 		group_map groupmap;
 		add_elements(env, *mamelayoutnode, groupmap, false, true);
-
-		// parse all the views
-		for (util::xml::data_node const *viewnode = mamelayoutnode->get_child("view"); viewnode != nullptr; viewnode = viewnode->get_next_sibling("view"))
-		{
-			// the trouble with allowing errors to propagate here is that it wreaks havoc with screenless systems that use a terminal by default
-			// e.g. intlc44 and intlc440 have a terminal on the TTY port by default and have a view with the front panel with the terminal screen
-			// however, they have a second view with just the front panel which is very useful if you're using e.g. -tty null_modem with a socket
-			// if the error is allowed to propagate, the entire layout is dropped so you can't select the useful view
-			try
-			{
-				m_viewlist.emplace_back(env, *viewnode, m_elemmap, groupmap);
-			}
-			catch (layout_reference_error const &err)
-			{
-				osd_printf_warning("Error instantiating layout view %s: %s\n", env.get_attribute_string(*viewnode, "name"), err.what());
-			}
-		}
 
 		// load the content of the first script node
 		if (!m_viewlist.empty())
@@ -5468,7 +5453,22 @@ void layout_file::add_elements(
 				local.increment_parameters();
 			}
 		}
-		else if (repeat || (strcmp(childnode->get_name(), "view") && strcmp(childnode->get_name(), "script")))
+		else if (!repeat && !strcmp(childnode->get_name(), "view"))
+		{
+			// the trouble with allowing errors to propagate here is that it wreaks havoc with screenless systems that use a terminal by default
+			// e.g. intlc44 and intlc440 have a terminal on the TTY port by default and have a view with the front panel with the terminal screen
+			// however, they have a second view with just the front panel which is very useful if you're using e.g. -tty null_modem with a socket
+			// if the error is allowed to propagate, the entire layout is dropped so you can't select the useful view
+			try
+			{
+				m_viewlist.emplace_back(env, *childnode, m_elemmap, groupmap);
+			}
+			catch (layout_reference_error const &err)
+			{
+				osd_printf_warning("Error instantiating layout view %s: %s\n", env.get_attribute_string(*childnode, "name"), err.what());
+			}
+		}
+		else if (repeat || strcmp(childnode->get_name(), "script"))
 		{
 			throw layout_syntax_error(util::string_format("unknown layout item %s", childnode->get_name()));
 		}

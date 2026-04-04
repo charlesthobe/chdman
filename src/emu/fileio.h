@@ -61,7 +61,7 @@ public:
 	path_iterator &operator=(path_iterator const &that);
 
 	// main interface
-	bool next(std::string &buffer, const char *name = nullptr);
+	bool next(std::string &buffer);
 	void reset();
 
 private:
@@ -182,7 +182,7 @@ public:
 	// writing
 	u32 write(const void *buffer, u32 length);
 	int puts(std::string_view s);
-	int vprintf(util::format_argument_pack<std::ostream> const &args);
+	int vprintf(util::format_argument_pack<char> const &args);
 	template <typename Format, typename... Params> int printf(Format &&fmt, Params &&...args)
 	{
 		return vprintf(util::make_format_argument_pack(std::forward<Format>(fmt), std::forward<Params>(args)...));

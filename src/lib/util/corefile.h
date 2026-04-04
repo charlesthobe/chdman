@@ -76,12 +76,8 @@ public:
 	// read a full line of text from the file
 	virtual char *gets(char *s, int n) = 0;
 
-	// get a pointer to a buffer that holds the full file data in RAM
-	// this function may cause the full file data to be read
-	virtual const void *buffer() = 0;
-
 	// open a file with the specified filename, read it into memory, and return a pointer
-	static std::error_condition load(std::string_view filename, void **data, std::uint32_t &length) noexcept;
+	static std::error_condition load(std::string_view filename, void **data, std::size_t &length) noexcept;
 	static std::error_condition load(std::string_view filename, std::vector<uint8_t> &data) noexcept;
 
 
@@ -91,7 +87,7 @@ public:
 	virtual int puts(std::string_view s) = 0;
 
 	// printf-style text write to a file
-	virtual int vprintf(util::format_argument_pack<std::ostream> const &args) = 0;
+	virtual int vprintf(util::format_argument_pack<char> const &args) = 0;
 	template <typename Format, typename... Params> int printf(Format &&fmt, Params &&...args)
 	{
 		return vprintf(util::make_format_argument_pack(std::forward<Format>(fmt), std::forward<Params>(args)...));
@@ -102,22 +98,6 @@ public:
 };
 
 } // namespace util
-
-
-/***************************************************************************
-    FUNCTION PROTOTYPES
-***************************************************************************/
-
-/* ----- filename utilities ----- */
-
-// extract the base part of a filename (remove extensions and paths)
-std::string_view core_filename_extract_base(std::string_view name, bool strip_extension = false) noexcept;
-
-// extracts the file extension from a filename
-std::string_view core_filename_extract_extension(std::string_view filename, bool strip_period = false) noexcept;
-
-// true if the given filename ends with a particular extension
-bool core_filename_ends_with(std::string_view filename, std::string_view extension) noexcept;
 
 
 #endif // MAME_LIB_UTIL_COREFILE_H

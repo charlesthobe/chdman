@@ -19,14 +19,14 @@ class nascom_format : public wd177x_format
 public:
 	nascom_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
 };
 
-extern const floppy_format_type FLOPPY_NASCOM_FORMAT;
+extern const nascom_format FLOPPY_NASCOM_FORMAT;
 
 #endif // MAME_FORMATS_NASCOM_DSK_H

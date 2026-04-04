@@ -35,6 +35,18 @@ class floppy_image_format_t
 public:
 	virtual ~floppy_image_format_t() = default;
 
+	// The result of identify is a binary or of these flags, comparison afterwards is numerical.
+	// If a match is incorrect (bad signature for instance), result must be 0.  The non-zero
+	// result helps to decide how reliable the identification is, for choice classification.
+
+	enum {
+		FIFID_HINT   = 0x01, // All other things being equal, favorise this format
+		FIFID_EXT    = 0x02, // Extension matches one of the list (set outside of identify)
+		FIFID_SIZE   = 0x04, // File size matches what is expected
+		FIFID_SIGN   = 0x08, // The file signature matches
+		FIFID_STRUCT = 0x10, // Some file internal structure aspects have been verified
+	};
+
 	/*! @brief Identify an image.
 	  The identify function tests if the image is valid
 	  for this particular format.
@@ -42,41 +54,41 @@ public:
 	  @param form_factor Physical form factor of disk, from the enum
 	  in floppy_image
 	  @param variants the variants from floppy_image the drive can handle
-	  @return 1 if image valid, 0 otherwise.
+	  @return Binary or of FIFID flags, 0 if invalid for that format
 	*/
-	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) = 0;
+	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const = 0;
 
 	/*! @brief Load an image.
 	  The load function opens an image file and converts it to the
-	  internal MESS floppy representation.
+	  internal MAME floppy representation.
 	  @param io source buffer containing the image data.
 	  @param form_factor Physical form factor of disk, from the enum
 	  in floppy_image
 	  @param variants the variants from floppy_image the drive can handle
-	  @param image output buffer for data in MESS internal format.
+	  @param image output buffer for data in MAME internal format.
 	  @return true on success, false otherwise.
 	*/
-	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image) = 0;
+	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const = 0;
 
 	/*! @brief Save an image.
-	  The save function writes back an image from the MESS internal
+	  The save function writes back an image from the MAME internal
 	  floppy representation to the appropriate format on disk.
 	  @param io output buffer for the data in the on-disk format.
 	  @param variants the variants from floppy_image the drive can handle
-	  @param image source buffer containing data in MESS internal format.
+	  @param image source buffer containing data in MAME internal format.
 	  @return true on success, false otherwise.
 	*/
-	virtual bool save(util::random_read_write &io, const std::vector<uint32_t> &variants, floppy_image *image);
+	virtual bool save(util::random_read_write &io, const std::vector<uint32_t> &variants, const floppy_image &image) const;
 
 	//! @returns string containing name of format.
-	virtual const char *name() const = 0;
+	virtual const char *name() const noexcept = 0;
 	//! @returns string containing description of format.
-	virtual const char *description() const = 0;
+	virtual const char *description() const noexcept = 0;
 	//! @returns string containing comma-separated list of file
 	//! extensions the format may use.
-	virtual const char *extensions() const = 0;
+	virtual const char *extensions() const noexcept = 0;
 	//! @returns true if format supports saving.
-	virtual bool supports_save() const = 0;
+	virtual bool supports_save() const noexcept;
 
 	//! This checks if the file has the proper extension for this format.
 	//! @param file_name
@@ -179,7 +191,7 @@ protected:
 	    @param variant the variant to test
 	    @result true if variant is in variants
 	*/
-	static bool has_variant(const std::vector<uint32_t> &variants, uint32_t variant);
+	static bool has_variant(const std::vector<uint32_t> &variants, uint32_t variant) noexcept;
 
 	//! Sector data description
 	struct desc_s
@@ -200,7 +212,7 @@ protected:
 	    @param track_size in _cells_, i.e. 100000 for a usual 2us-per-cell track at 300rpm.
 	    @param image
 	*/
-	static void generate_track(const desc_e *desc, int track, int head, const desc_s *sect, int sect_count, int track_size, floppy_image *image);
+	static void generate_track(const desc_e *desc, int track, int head, const desc_s *sect, int sect_count, int track_size, floppy_image &image);
 
 	/*! @brief Generate a track from cell binary values, MSB-first.
 	    @param track
@@ -211,7 +223,7 @@ protected:
 	    @param subtrack subtrack index, 0-3
 	    @param splice write splice position
 	*/
-	static void generate_track_from_bitstream(int track, int head, const uint8_t *trackbuf, int track_size, floppy_image *image, int subtrack = 0, int splice = 0);
+	static void generate_track_from_bitstream(int track, int head, const uint8_t *trackbuf, int track_size, floppy_image &image, int subtrack = 0, int splice = 0);
 
 	//! @brief Generate a track from cell level values (0/1/W/D/N).
 
@@ -228,10 +240,11 @@ protected:
 	    know. trackbuf may be modified at that position or after.
 	    @param image
 	*/
-	static void generate_track_from_levels(int track, int head, std::vector<uint32_t> &trackbuf, int splice_pos, floppy_image *image);
+	static void generate_track_from_levels(int track, int head, const std::vector<uint32_t> &trackbuf, int splice_pos, floppy_image &image);
 
-	//! Normalize the times in a cell buffer to sum up to 200000000
-	static void normalize_times(std::vector<uint32_t> &buffer);
+	//! Normalize the times in a cell buffer to bring the
+	//! 0..last_position range up to 0..200000000
+	static void normalize_times(std::vector<uint32_t> &buffer, uint32_t last_position);
 
 	// Some conversion tables for gcr
 	static const uint8_t gcr5fw_tb[0x10], gcr5bw_tb[0x20];
@@ -308,7 +321,7 @@ protected:
 	 @endverbatim
 	 */
 
-	static std::vector<bool> generate_bitstream_from_track(int track, int head, int cell_size, floppy_image *image, int subtrack = 0);
+	static std::vector<bool> generate_bitstream_from_track(int track, int head, int cell_size, const floppy_image &image, int subtrack = 0, int *max_delta = nullptr);
 	static std::vector<uint8_t> generate_nibbles_from_bitstream(const std::vector<bool> &bitstream);
 
 	struct desc_pc_sector
@@ -317,7 +330,8 @@ protected:
 		int actual_size;
 		uint8_t *data;
 		bool deleted;
-		bool bad_crc;
+		bool bad_data_crc;
+		bool bad_addr_crc;
 	};
 
 	struct desc_gcr_sector
@@ -328,11 +342,11 @@ protected:
 	};
 
 	static int calc_default_pc_gap3_size(uint32_t form_factor, int sector_size);
-	static void build_wd_track_fm(int track, int head, floppy_image *image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_1, int gap_2);
-	static void build_wd_track_mfm(int track, int head, floppy_image *image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_1, int gap_2=22);
-	static void build_pc_track_fm(int track, int head, floppy_image *image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_4a=40, int gap_1=26, int gap_2=11);
-	static void build_pc_track_mfm(int track, int head, floppy_image *image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_4a=80, int gap_1=50, int gap_2=22);
-	static void build_mac_track_gcr(int track, int head, floppy_image *image, const desc_gcr_sector *sects);
+	static void build_wd_track_fm(int track, int head, floppy_image &image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_1, int gap_2);
+	static void build_wd_track_mfm(int track, int head, floppy_image &image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_1, int gap_2=22);
+	static void build_pc_track_fm(int track, int head, floppy_image &image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_4a=40, int gap_1=26, int gap_2=11);
+	static void build_pc_track_mfm(int track, int head, floppy_image &image, int cell_count, int sector_count, const desc_pc_sector *sects, int gap_3, int gap_4a=80, int gap_1=50, int gap_2=22);
+	static void build_mac_track_gcr(int track, int head, floppy_image &image, const desc_gcr_sector *sects);
 
 	//! @brief Extract standard sectors from a regenerated bitstream.
 	//! Returns a vector of the vector contents, indexed by the sector id.  Missing sectors have size zero.
@@ -350,24 +364,24 @@ protected:
 	static std::vector<std::vector<uint8_t>> extract_sectors_from_bitstream_victor_gcr5(const std::vector<bool> &bitstream);
 
 	//! Mac type sectors with GCR6 encoding
-	static std::vector<std::vector<uint8_t>> extract_sectors_from_track_mac_gcr6(int head, int track, floppy_image *image);
+	static std::vector<std::vector<uint8_t>> extract_sectors_from_track_mac_gcr6(int head, int track, const floppy_image &image);
 
 
 	//! @brief Get a geometry (including sectors) from an image.
 
 	//!   PC-type sectors with MFM encoding
-	static void get_geometry_mfm_pc(floppy_image *image, int cell_size, int &track_count, int &head_count, int &sector_count);
+	static void get_geometry_mfm_pc(const floppy_image &image, int cell_size, int &track_count, int &head_count, int &sector_count);
 	//!   PC-type sectors with FM encoding
-	static void get_geometry_fm_pc(floppy_image *image, int cell_size, int &track_count, int &head_count, int &sector_count);
+	static void get_geometry_fm_pc(const floppy_image &image, int cell_size, int &track_count, int &head_count, int &sector_count);
 
 
 	//!  Regenerate the data for a full track.
 	//!  PC-type sectors with MFM encoding and fixed-size.
-	static void get_track_data_mfm_pc(int track, int head, floppy_image *image, int cell_size, int sector_size, int sector_count, uint8_t *sectdata);
+	static void get_track_data_mfm_pc(int track, int head, const floppy_image &image, int cell_size, int sector_size, int sector_count, uint8_t *sectdata);
 
 	//!  Regenerate the data for a full track.
 	//!  PC-type sectors with FM encoding and fixed-size.
-	static void get_track_data_fm_pc(int track, int head, floppy_image *image, int cell_size, int sector_size, int sector_count, uint8_t *sectdata);
+	static void get_track_data_fm_pc(int track, int head, const floppy_image &image, int cell_size, int sector_size, int sector_count, uint8_t *sectdata);
 
 	//! Look up a bit in a level-type stream.
 	static bool bit_r(const std::vector<uint32_t> &buffer, int offset);
@@ -443,16 +457,6 @@ private:
 	static int calc_sector_index(int num, int interleave, int skew, int total_sectors, int track_head);
 };
 
-// a dce_type is simply a pointer to its alloc function
-typedef floppy_image_format_t *(*floppy_format_type)();
-
-// this template function creates a stub which constructs a image format
-template<class _FormatClass>
-floppy_image_format_t *floppy_image_format_creator()
-{
-	return new _FormatClass();
-}
-
 // ======================> floppy_image
 
 //! Class representing floppy image
@@ -460,19 +464,22 @@ floppy_image_format_t *floppy_image_format_creator()
 //! Internal format is close but not identical to the mfi format.
 //!
 //!
+
 //! Track data consists of a series of 32-bits lsb-first values
-//! representing magnetic cells.  Bits 0-27 indicate the absolute
-//! position of the start of the cell (not the size), and bits
-//! 28-31 the type.  Type can be:
-//! - 0, MG_A -> Magnetic orientation A
-//! - 1, MG_B -> Magnetic orientation B
-//! - 2, MG_N -> Non-magnetized zone (neutral)
-//! - 3, MG_D -> Damaged zone, reads as neutral but cannot be changed by writing
+//! representing the magnetic state.  Bits 0-27 indicate the absolute
+//! position of encoded event, and bits ! 28-31 the type.  Type can be:
+//! - 0, MG_F -> Flux orientation change
+//! - 1, MG_N -> Start of a non-magnetized zone (neutral)
+//! - 2, MG_D -> Start of a damaged zone, reads as neutral but cannot be changed by writing
+//! - 3, MG_E -> End of one of the previous zones, *inclusive*
 //!
 //! The position is in angular units of 1/200,000,000th of a turn.
-//! The last cell implicit end position is of course 200,000,000.
+//! A N or D zone must not wrap at the 200,000,000 position, it has to
+//! be split in two (the first finishing at 199,999,999, the second
+//! starting at 0)
 //!
-//! Unformatted tracks are encoded as zero-size.
+//! Unformatted tracks are encoded as zero-size, and are strictly equivalent
+//! to (MG_N, 0), (MG_E, 199,999,999)
 //!
 //! The "track splice" information indicates where to start writing
 //! if you try to rewrite a physical disk with the data.  Some
@@ -501,10 +508,10 @@ public:
 		TIME_MASK = 0x0fffffff,
 		MG_MASK   = 0xf0000000,
 		MG_SHIFT  = 28, //!< Bitshift constant for magnetic orientation data
-		MG_A      = (0 << MG_SHIFT),    //!< - 0, MG_A -> Magnetic orientation A
-		MG_B      = (1 << MG_SHIFT),    //!< - 1, MG_B -> Magnetic orientation B
-		MG_N      = (2 << MG_SHIFT),    //!< - 2, MG_N -> Non-magnetized zone (neutral)
-		MG_D      = (3 << MG_SHIFT)     //!< - 3, MG_D -> Damaged zone, reads as neutral but cannot be changed by writing
+		MG_F      = (0 << MG_SHIFT),    //!< - 0, MG_F -> Flux orientation change
+		MG_N      = (1 << MG_SHIFT),    //!< - 1, MG_N -> Non-magnetized zone (neutral)
+		MG_D      = (2 << MG_SHIFT),    //!< - 2, MG_D -> Damaged zone, reads as neutral but cannot be changed by writing
+		MG_E      = (3 << MG_SHIFT)     //!< - 3, MG_E -> End of zone
 	};
 
 
@@ -514,19 +521,36 @@ public:
 		FF_3        = 0x20202033, //!< "3   " 3 inch disk
 		FF_35       = 0x20203533, //!< "35  " 3.5 inch disk
 		FF_525      = 0x20353235, //!< "525 " 5.25 inch disk
-		FF_8        = 0x20202038  //!< "8   " 8 inch disk
+		FF_8        = 0x20202038, //!< "8   " 8 inch disk
+		FF_TWIG     = 0x47495754, //!< "TWIG" 5.25 twiggy
 	};
 
 	//! Variants
 	enum {
-		SSSD  = 0x44535353, //!< "SSSD", Single-sided single-density
-		SSDD  = 0x44445353, //!< "SSDD", Single-sided double-density
-		SSQD  = 0x44515353, //!< "SSQD", Single-sided quad-density
-		DSSD  = 0x44535344, //!< "DSSD", Double-sided single-density
-		DSDD  = 0x44445344, //!< "DSDD", Double-sided double-density (720K in 3.5, 360K in 5.25)
-		DSQD  = 0x44515344, //!< "DSQD", Double-sided quad-density (720K in 5.25, means DD+80 tracks)
-		DSHD  = 0x44485344, //!< "DSHD", Double-sided high-density (1440K)
-		DSED  = 0x44455344  //!< "DSED", Double-sided extra-density (2880K)
+		SSSD   = 0x44535353, //!< "SSSD", Single-sided single-density
+		SSSD10 = 0x30315353, //!< "SS10", Single-sided single-density 10 hard sector
+		SSSD16 = 0x36315353, //!< "SS16", Single-sided single-density 16 hard sector
+		SSSD32 = 0x32335353, //!< "SS32", Single-sided single-density 32 hard sector
+		SSDD   = 0x44445353, //!< "SSDD", Single-sided double-density
+		SSDD10 = 0x30314453, //!< "SD10", Single-sided double-density 10 hard sector
+		SSDD16 = 0x36314453, //!< "SD16", Single-sided double-density 16 hard sector
+		SSDD32 = 0x32334453, //!< "SD32", Single-sided double-density 32 hard sector
+		SSQD   = 0x44515353, //!< "SSQD", Single-sided quad-density
+		SSQD10 = 0x30315153, //!< "SQ10", Single-sided quad-density 10 hard sector
+		SSQD16 = 0x36315153, //!< "SQ16", Single-sided quad-density 16 hard sector
+		DSSD   = 0x44535344, //!< "DSSD", Double-sided single-density
+		DSSD10 = 0x30315344, //!< "DS10", Double-sided single-density 10 hard sector
+		DSSD16 = 0x36315344, //!< "DS16", Double-sided single-density 16 hard sector
+		DSSD32 = 0x32335344, //!< "DS32", Double-sided single-density 32 hard sector
+		DSDD   = 0x44445344, //!< "DSDD", Double-sided double-density (720K in 3.5, 360K in 5.25)
+		DSDD10 = 0x30314444, //!< "DD10", Double-sided double-density 10 hard sector
+		DSDD16 = 0x36314444, //!< "DD16", Double-sided double-density 16 hard sector (360K in 5.25)
+		DSDD32 = 0x32334444, //!< "DD32", Double-sided double-density 32 hard sector
+		DSQD   = 0x44515344, //!< "DSQD", Double-sided quad-density (720K in 5.25, means DD+80 tracks)
+		DSQD10 = 0x30315144, //!< "DQ10", Double-sided quad-density 10 hard sector
+		DSQD16 = 0x36315144, //!< "DQ16", Double-sided quad-density 16 hard sector (720K in 5.25, means DD+80 tracks)
+		DSHD   = 0x44485344, //!< "DSHD", Double-sided high-density (1440K in 3.5, 1200K in 5.25)
+		DSED   = 0x44455344  //!< "DSED", Double-sided extra-density (2880K)
 	};
 
 	//! Encodings
@@ -534,6 +558,14 @@ public:
 		FM   = 0x2020464D, //!< "  FM", frequency modulation
 		MFM  = 0x204D464D, //!< " MFM", modified frequency modulation
 		M2FM = 0x4D32464D  //!< "M2FM", modified modified frequency modulation
+	};
+
+	//! Sectoring
+	enum {
+		SOFT = 0x54464F53,  //!< "SOFT", Soft-sectored
+		H10  = 0x20303148,  //!< "H10 ", Hard 10-sectored
+		H16  = 0x20363148,  //!< "H16 ", Hard 16-sectored
+		H32  = 0x20323348   //!< "H32 ", Hard 32-sectored (8 inch disk)
 	};
 
 	// construction/destruction
@@ -546,16 +578,31 @@ public:
 	  @param form_factor form factor of drive (from enum)
 	*/
 	floppy_image(int tracks, int heads, uint32_t form_factor);
-	virtual ~floppy_image();
+	~floppy_image();
 
 	//! @return the form factor.
-	uint32_t get_form_factor() const { return form_factor; }
+	uint32_t get_form_factor() const noexcept { return form_factor; }
 	//! @return the variant.
-	uint32_t get_variant() const { return variant; }
+	uint32_t get_variant() const noexcept { return variant; }
+	//! @return the disk sectoring.
+	uint32_t get_sectoring() const noexcept { return sectoring; }
 	//! @param v the variant.
-	void set_variant(uint32_t v) { variant = v; }
+	void set_variant(uint32_t v);
 	//! @param v the variant.
-	void set_form_variant(uint32_t f, uint32_t v) { if(form_factor == FF_UNKNOWN) form_factor = f; variant = v; }
+	void set_form_variant(uint32_t f, uint32_t v) { if(form_factor == FF_UNKNOWN) form_factor = f; set_variant(v); }
+	//! @param s the sectoring.
+	void set_sectoring(uint32_t s) { sectoring = s; }
+
+	//! Find most recent and next index hole for provided angular position.
+	//! The most recent hole may be equal to provided position. The next
+	//! hole will be 200000000 if all holes of the current rotation are in
+	//! the past.
+
+	/*! @param pos angular position
+	    @param last most recent index hole
+	    @param next next index hole
+	*/
+	void find_index_hole(uint32_t pos, uint32_t &last, uint32_t &next) const;
 
 	/*!
 	  @param track
@@ -563,7 +610,8 @@ public:
 	  @param head head number
 	  @return a pointer to the data buffer for this track and head
 	*/
-	std::vector<uint32_t> &get_buffer(int track, int head, int subtrack = 0) { assert(track < tracks && head < heads); return track_array[track*4+subtrack][head].cell_data; }
+	std::vector<uint32_t> &get_buffer(int track, int head, int subtrack = 0) noexcept { assert(track < tracks && head < heads); return track_array[track*4+subtrack][head].cell_data; }
+	const std::vector<uint32_t> &get_buffer(int track, int head, int subtrack = 0) const noexcept { assert(track < tracks && head < heads); return track_array[track*4+subtrack][head].cell_data; }
 
 	//! Sets the write splice position.
 	//! The "track splice" information indicates where to start writing
@@ -577,31 +625,31 @@ public:
 	    @param head
 	    @param pos the position
 	*/
-	void set_write_splice_position(int track, int head, uint32_t pos, int subtrack = 0) { assert(track < tracks && head < heads); track_array[track*4+subtrack][head].write_splice = pos; }
+	void set_write_splice_position(int track, int head, uint32_t pos, int subtrack = 0) noexcept { assert(track < tracks && head < heads); track_array[track*4+subtrack][head].write_splice = pos; }
 	//! @return the current write splice position.
-	uint32_t get_write_splice_position(int track, int head, int subtrack = 0) const { assert(track < tracks && head < heads); return track_array[track*4+subtrack][head].write_splice; }
+	uint32_t get_write_splice_position(int track, int head, int subtrack = 0) const noexcept { assert(track < tracks && head < heads); return track_array[track*4+subtrack][head].write_splice; }
 	//! @return the maximal geometry supported by this format.
-	void get_maximal_geometry(int &tracks, int &heads) const;
+	void get_maximal_geometry(int &tracks, int &heads) const noexcept;
 
 	//! @return the current geometry of the loaded image.
-	void get_actual_geometry(int &tracks, int &heads);
+	void get_actual_geometry(int &tracks, int &heads) const noexcept;
 
 	//! @return the track resolution (0=full track, 1 = half-track, 2 = quarter track)
-	int get_resolution() const;
+	int get_resolution() const noexcept;
 
 	//! @return whether a given track is formatted
-	bool track_is_formatted(int track, int head, int subtrack = 0);
+	bool track_is_formatted(int track, int head, int subtrack = 0) const noexcept;
 
 	//! Returns the variant name for the particular disk form factor/variant
 	//! @param form_factor
 	//! @param variant
 	//! @return a string containing the variant name.
-	static const char *get_variant_name(uint32_t form_factor, uint32_t variant);
+	static const char *get_variant_name(uint32_t form_factor, uint32_t variant) noexcept;
 
 private:
 	int tracks, heads;
 
-	uint32_t form_factor, variant;
+	uint32_t form_factor, variant, sectoring;
 
 	struct track_info
 	{
@@ -614,6 +662,14 @@ private:
 	// track number multiplied by 4 then head
 	// last array size may be bigger than actual track size
 	std::vector<std::vector<track_info> > track_array;
+
+	// Additional index holes in increasing order. Entries are absolute
+	// positions of index holes in the same units as cell_data. The
+	// positions are the start of the hole, not the center of the hole. The
+	// hole at angular position 0 is implicit, so an empty list encodes a
+	// regular soft-sectored disk. Additional holes are found on
+	// hard-sectored disks.
+	std::vector<uint32_t> index_array;
 };
 
 #endif // MAME_FORMATS_FLOPIMG_H

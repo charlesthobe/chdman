@@ -1,7 +1,7 @@
 // license:BSD-3-Clause
 // copyright-holders: 68bit
 /*
- * mdos_dsk.c  -  Motorola MDOS compatible disk images
+ * mdos_dsk.cpp  -  Motorola MDOS compatible disk images
  *
  * The format is largely IBM 3740 compatible, with 77 tracks, and 26 sectors
  * per track, and a sector size of 128 bytes. Single sided disks were initially
@@ -53,38 +53,41 @@
 #include "imageutl.h"
 
 #include "ioprocs.h"
+#include "multibyte.h"
+
+#include <tuple>
 
 
 mdos_format::mdos_format() : wd177x_format(formats)
 {
 }
 
-const char *mdos_format::name() const
+const char *mdos_format::name() const noexcept
 {
 	return "mdos";
 }
 
-const char *mdos_format::description() const
+const char *mdos_format::description() const noexcept
 {
 	return "Motorola MDOS compatible disk image";
 }
 
-const char *mdos_format::extensions() const
+const char *mdos_format::extensions() const noexcept
 {
 	return "dsk";
 }
 
-int mdos_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int mdos_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
-	int type = find_size(io, form_factor, variants);
+	int const type = find_size(io, form_factor, variants);
 
 	if (type != -1)
-		return 75;
+		return FIFID_SIZE | FIFID_STRUCT;
 
 	return 0;
 }
 
-bool mdos_format::check_ascii(uint8_t *str, size_t len, const char* name)
+bool mdos_format::check_ascii(const uint8_t *str, size_t len, const char* name)
 {
 	LOG_FORMATS(" %s: \"", name);
 	for (int i = 0; i < len; i++) {
@@ -101,7 +104,7 @@ bool mdos_format::check_ascii(uint8_t *str, size_t len, const char* name)
 	return 1;
 }
 
-int mdos_format::parse_date_field(uint8_t *str)
+int mdos_format::parse_date_field(const uint8_t *str)
 {
 	uint8_t high = str[0];
 	uint8_t low = str[1];
@@ -112,19 +115,24 @@ int mdos_format::parse_date_field(uint8_t *str)
 	return (high - 0x30) * 10 + (low - 0x30);
 }
 
-int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
+	std::error_condition err;
 	size_t actual;
+
 	uint64_t size;
 	if (io.length(size))
 		return -1;
 
-	// Look at the disk id sector.
-	io.read_at(0, &info, sizeof(struct disk_id_sector), actual);
+	// Look at the disk ID sector.
+	disk_id_sector info;
+	std::tie(err, actual) = read_at(io, 0, &info, sizeof(disk_id_sector));
+	if (err || (sizeof(disk_id_sector) != actual))
+		return -1;
 
 	LOG_FORMATS("MDOS floppy dsk: size %d bytes, %d total sectors, %d remaining bytes, expected form factor %x\n", (uint32_t)size, (uint32_t)size / 128, (uint32_t)size % 128, form_factor);
 
-	// The 'unused' area is not necessarily zero filled and is ignoded
+	// The 'unused' area is not necessarily zero filled and is ignored
 	// in the identification of a MDOS format image.
 
 	// Expect an ASCII id, version, revision, and 'user name' strings.
@@ -144,9 +152,9 @@ int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const st
 		return -1;
 
 	// The date should be the numeric day, month and year.
-	int month = parse_date_field(info.date);
-	int day = parse_date_field(info.date + 2);
-	int year = parse_date_field(info.date + 4);
+	int const month = parse_date_field(info.date);
+	int const day = parse_date_field(info.date + 2);
+	int const year = parse_date_field(info.date + 4);
 
 	LOG_FORMATS(" day %d, month %d, year %d\n", day, month, year);
 	if (day < 1 || day > 32 || month < 1 || month > 12 || year < 0)
@@ -157,9 +165,7 @@ int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const st
 	// 10 words. The area beyond the zero word is not always zero filled,
 	// and is ignored here. Check that it is consistent with this.
 	for (int i = 0; i < 10; i++) {
-		uint8_t high = info.rib_addr[i * 2];
-		uint8_t low = info.rib_addr[i * 2 + 1];
-		uint16_t cluster = (high << 8) | low;
+		uint16_t cluster = get_u16be(&info.rib_addr[i * 2]);
 
 		if (cluster == 0)
 			break;
@@ -182,8 +188,12 @@ int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const st
 	// the extent of the disk are free or available.
 
 	uint8_t cluster_allocation[128], cluster_available[128];
-	io.read_at(1 * 128, &cluster_allocation, sizeof(cluster_allocation), actual);
-	io.read_at(2 * 128, &cluster_available, sizeof(cluster_available), actual);
+	std::tie(err, actual) = read_at(io, 1 * 128, &cluster_allocation, sizeof(cluster_allocation));
+	if (err || (sizeof(cluster_allocation) != actual))
+		return -1;
+	std::tie(err, actual) = read_at(io, 2 * 128, &cluster_available, sizeof(cluster_available));
+	if (err || (sizeof(cluster_available) != actual))
+		return -1;
 
 	for (int cluster = 0; cluster < sizeof(cluster_allocation) * 8; cluster++) {
 		if (cluster * 4 * 128 + 4 * 128 > size) {
@@ -202,7 +212,7 @@ int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const st
 		}
 	}
 
-	for (int i=0; formats[i].form_factor; i++) {
+	for (int i = 0; formats[i].form_factor; i++) {
 		const format &f = formats[i];
 		LOG_FORMATS(" checking format %d with form factor %02x, %d sectors, %d heads\n",
 				i, f.form_factor, f.sector_count, f.head_count);
@@ -227,7 +237,7 @@ int mdos_format::find_size(util::random_read &io, uint32_t form_factor, const st
 	return -1;
 }
 
-const wd177x_format::format &mdos_format::get_track_format(const format &f, int head, int track)
+const wd177x_format::format &mdos_format::get_track_format(const format &f, int head, int track) const
 {
 	int n = -1;
 
@@ -287,4 +297,4 @@ const mdos_format::format mdos_format::formats_head1[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_MDOS_FORMAT = &floppy_image_format_creator<mdos_format>;
+const mdos_format FLOPPY_MDOS_FORMAT;

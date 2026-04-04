@@ -35,22 +35,21 @@ public:
 	ccvf_format();
 	ccvf_format(const format *formats);
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
-	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) override;
-	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image) override;
-	virtual bool supports_save() const override;
+	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const override;
+	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const override;
 
 protected:
 	const format *formats;
 
-	floppy_image_format_t::desc_e* get_desc_8n1(const format &f, int &current_size);
+	static floppy_image_format_t::desc_e* get_desc_8n1(const format &f, int &current_size);
 
 	static const format file_formats[];
 };
 
-extern const floppy_format_type FLOPPY_CCVF_FORMAT;
+extern const ccvf_format FLOPPY_CCVF_FORMAT;
 
 #endif // MAME_FORMATS_CCVF_DSK_H

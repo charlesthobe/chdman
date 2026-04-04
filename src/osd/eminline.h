@@ -348,6 +348,114 @@ inline bool addu_64x64_co(uint64_t a, uint64_t b, uint64_t &sum)
 #endif
 
 
+/*-------------------------------------------------
+    muldivu_64 - perform an unsigned 64 bits a*b/c,
+    rounding toward zero.  Unpredictable (including
+    crashes) when the result does not fit in 64
+    bits.
+-------------------------------------------------*/
+
+#ifndef muldivu_64
+inline uint64_t muldivu_64(uint64_t a, uint64_t b, uint64_t c)
+{
+	// Borrowed from https://stackoverflow.com/questions/8733178/most-accurate-way-to-do-a-combined-multiply-and-divide-operation-in-64-bit
+
+	constexpr uint64_t base = 1ULL<<32;
+	constexpr uint64_t maxdiv = (base-1)*base + (base-1);
+
+	// First get the easy thing
+	uint64_t res = (a/c) * b + (a%c) * (b/c);
+	a %= c;
+	b %= c;
+	// Are we done?
+	if (a == 0 || b == 0)
+		return res;
+	// Is it easy to compute what remain to be added?
+	if (c < base)
+		return res + (a*b/c);
+	// Now 0 < a < c, 0 < b < c, c >= 1ULL
+	// Normalize
+	uint64_t norm = maxdiv/c;
+	c *= norm;
+	a *= norm;
+	// split into 2 digits
+	uint64_t ah = a / base, al = a % base;
+	uint64_t bh = b / base, bl = b % base;
+	uint64_t ch = c / base, cl = c % base;
+	// compute the product
+	uint64_t p0 = al*bl;
+	uint64_t p1 = p0 / base + al*bh;
+	p0 %= base;
+	uint64_t p2 = p1 / base + ah*bh;
+	p1 = (p1 % base) + ah * bl;
+	p2 += p1 / base;
+	p1 %= base;
+	// p2 holds 2 digits, p1 and p0 one
+
+	// first digit is easy, not null only in case of overflow
+	//  uint64_t q2 = p2 / c;
+	p2 = p2 % c;
+
+	// second digit, estimate
+	uint64_t q1 = p2 / ch;
+	// and now adjust
+	uint64_t rhat = p2 % ch;
+	// the loop can be unrolled, it will be executed at most twice for
+	// even bases -- three times for odd one -- due to the normalisation above
+	while (q1 >= base || (rhat < base && q1*cl > rhat*base+p1)) {
+		q1--;
+		rhat += ch;
+	}
+	// subtract
+	p1 = ((p2 % base) * base + p1) - q1 * cl;
+	p2 = (p2 / base * base + p1 / base) - q1 * ch;
+	p1 = p1 % base + (p2 % base) * base;
+
+	// now p1 hold 2 digits, p0 one and p2 is to be ignored
+	uint64_t q0 = p1 / ch;
+	rhat = p1 % ch;
+	while (q0 >= base || (rhat < base && q0*cl > rhat*base+p0)) {
+		q0--;
+		rhat += ch;
+	}
+	// we don't need to do the subtraction (needed only to get the remainder,
+	// in which case we have to divide it by norm)
+	return res + q0 + q1 * base; // + q2 *base*base
+}
+#endif
+
+
+/*-------------------------------------------------
+    muldivupu_64 - perform an unsigned 64 bits
+    a*b/c, rounding away from zero.  Unpredictable
+    (including crashes) when the result does not
+    fit in 64 bits.
+-------------------------------------------------*/
+
+#ifndef muldivupu_64
+inline uint64_t muldivupu_64(uint64_t a, uint64_t b, uint64_t c)
+{
+	// The annoying case is c > 1e32, which is a case we do not use yet so
+	// hard to test.
+
+	constexpr uint64_t base = 1ULL<<32;
+
+	// First get the easy thing
+	uint64_t res = (a/c) * b + (a%c) * (b/c);
+	a %= c;
+	b %= c;
+	// Are we done?
+	if (a == 0 || b == 0)
+		return res;
+	// Is it easy to compute what remain to be added?
+	if (c < base)
+		return res + ((a*b+c-1)/c);
+	fprintf(stderr, "muldiv64c: Annoying case not handled\n");
+	abort();
+}
+#endif
+
+
 
 /***************************************************************************
     INLINE BIT MANIPULATION FUNCTIONS
@@ -474,6 +582,74 @@ inline unsigned population_count_64(uint64_t val)
 #endif
 
 
+/*-------------------------------------------------
+    rotl_32 - circularly shift a 32-bit value left
+    by the specified number of bits (modulo 32)
+-------------------------------------------------*/
+
+#ifndef rotl_32
+constexpr uint32_t rotl_32(uint32_t val, int shift)
+{
+	shift &= 31;
+	if (shift)
+		return val << shift | val >> (32 - shift);
+	else
+		return val;
+}
+#endif
+
+
+/*-------------------------------------------------
+    rotr_32 - circularly shift a 32-bit value right
+    by the specified number of bits (modulo 32)
+-------------------------------------------------*/
+
+#ifndef rotr_32
+constexpr uint32_t rotr_32(uint32_t val, int shift)
+{
+	shift &= 31;
+	if (shift)
+		return val >> shift | val << (32 - shift);
+	else
+		return val;
+}
+#endif
+
+
+/*-------------------------------------------------
+    rotl_64 - circularly shift a 64-bit value left
+    by the specified number of bits (modulo 64)
+-------------------------------------------------*/
+
+#ifndef rotl_64
+constexpr uint64_t rotl_64(uint64_t val, int shift)
+{
+	shift &= 63;
+	if (shift)
+		return val << shift | val >> (64 - shift);
+	else
+		return val;
+}
+#endif
+
+
+/*-------------------------------------------------
+    rotr_64 - circularly shift a 64-bit value right
+    by the specified number of bits (modulo 64)
+-------------------------------------------------*/
+
+#ifndef rotr_64
+constexpr uint64_t rotr_64(uint64_t val, int shift)
+{
+	shift &= 63;
+	if (shift)
+		return val >> shift | val << (64 - shift);
+	else
+		return val;
+}
+#endif
+
+
 /***************************************************************************
     INLINE TIMING FUNCTIONS
 ***************************************************************************/
@@ -486,7 +662,7 @@ inline unsigned population_count_64(uint64_t val)
 -------------------------------------------------*/
 
 #ifndef get_profile_ticks
-inline int64_t get_profile_ticks()
+inline int64_t get_profile_ticks() noexcept
 {
 	return osd_ticks();
 }

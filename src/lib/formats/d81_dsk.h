@@ -19,16 +19,16 @@ class d81_format : public wd177x_format
 public:
 	d81_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
-	virtual floppy_image_format_t::desc_e* get_desc_mfm(const format &f, int &current_size, int &end_gap_index) override;
+	virtual floppy_image_format_t::desc_e* get_desc_mfm(const format &f, int &current_size, int &end_gap_index) const override;
 
 private:
 	static const format formats[];
 };
 
-extern const floppy_format_type FLOPPY_D81_FORMAT;
+extern const d81_format FLOPPY_D81_FORMAT;
 
 #endif // MAME_FORMATS_D81_DSK_H

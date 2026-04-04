@@ -18,14 +18,14 @@ class asst128_format : public upd765_format {
 public:
 	asst128_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
 };
 
-extern const floppy_format_type FLOPPY_ASST128_FORMAT;
+extern const asst128_format FLOPPY_ASST128_FORMAT;
 
 #endif // MAME_FORMATS_ASST128_DSK_H

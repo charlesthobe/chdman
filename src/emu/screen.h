@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "rendertypes.h"
+
 #include <type_traits>
 #include <utility>
 
@@ -31,28 +33,18 @@ enum screen_type_enum
 	SCREEN_TYPE_SVG
 };
 
-// texture formats
-enum texture_format
-{
-	TEXFORMAT_UNDEFINED = 0,                            // require a format to be specified
-	TEXFORMAT_PALETTE16,                                // 16bpp palettized, no alpha
-	TEXFORMAT_RGB32,                                    // 32bpp 8-8-8 RGB
-	TEXFORMAT_ARGB32,                                   // 32bpp 8-8-8-8 ARGB
-	TEXFORMAT_YUY16                                     // 16bpp 8-8 Y/Cb, Y/Cr in sequence
-};
-
 // screen_update callback flags
-constexpr u32 UPDATE_HAS_NOT_CHANGED = 0x0001;   // the video has not changed
+constexpr u32 UPDATE_HAS_NOT_CHANGED = 0x0001; // the video has not changed
 
 /*!
  @defgroup flags for video_attributes
  @{
  @def VIDEO_UPDATE_BEFORE_VBLANK
- update_video called at the start of the VBLANK period
+ update_video called at the start of the VBLANK period, this is the default
  @todo hack, remove me
 
  @def VIDEO_UPDATE_AFTER_VBLANK
- update_video called at the end of the VBLANK period
+ update_video called at the end of the VBLANK period (in other words: before active display)
  @todo hack, remove me
 
  @def VIDEO_SELF_RENDER
@@ -233,7 +225,7 @@ public:
 	screen_device &set_raw(u32 pixclock, u16 htotal, u16 hbend, u16 hbstart, u16 vtotal, u16 vbend, u16 vbstart)
 	{
 		assert(pixclock != 0);
-		m_clock = pixclock;
+		set_clock(pixclock);
 		m_refresh = HZ_TO_ATTOSECONDS(pixclock) * htotal * vtotal;
 		m_vblank = m_refresh / vtotal * (vtotal - (vbstart - vbend));
 		m_width = htotal;
@@ -245,6 +237,10 @@ public:
 	{
 		xtal.validate(std::string("Configuring screen ") + tag());
 		return set_raw(xtal.value(), htotal, hbend, hbstart, vtotal, vbend, vbstart);
+	}
+	screen_device &set_raw(const XTAL &xtal, u16 htotal, u16 vtotal, rectangle visarea)
+	{
+		return set_raw(xtal, htotal, visarea.left(), visarea.right() + 1, vtotal, visarea.top(), visarea.bottom() + 1);
 	}
 	void set_refresh(attoseconds_t rate) { m_refresh = rate; }
 
@@ -389,8 +385,8 @@ public:
 	// beam positioning and state
 	int vpos() const;
 	int hpos() const;
-	DECLARE_READ_LINE_MEMBER(vblank) const { return (machine().time() < m_vblank_end_time) ? 1 : 0; }
-	DECLARE_READ_LINE_MEMBER(hblank) const { int const curpos = hpos(); return (curpos < m_visarea.left() || curpos > m_visarea.right()) ? 1 : 0; }
+	int vblank() const { return (machine().time() < m_vblank_end_time) ? 1 : 0; }
+	int hblank() const { int const curpos = hpos(); return (curpos < m_visarea.left() || curpos > m_visarea.right()) ? 1 : 0; }
 
 	// timing
 	attotime time_until_pos(int vpos, int hpos = 0) const;
@@ -428,30 +424,22 @@ public:
 private:
 	class svg_renderer;
 
-	// timer IDs
-	enum
-	{
-		TID_VBLANK_START,
-		TID_VBLANK_END,
-		TID_SCANLINE0,
-		TID_SCANLINE
-	};
-
 	// device-level overrides
 	virtual void device_validity_check(validity_checker &valid) const override;
 	virtual void device_config_complete() override;
-	virtual void device_resolve_objects() override;
-	virtual void device_start() override;
-	virtual void device_reset() override;
-	virtual void device_stop() override;
+	virtual void device_resolve_objects() override ATTR_COLD;
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+	virtual void device_stop() override ATTR_COLD;
 	virtual void device_post_load() override;
-	virtual void device_timer(emu_timer &timer, device_timer_id id, int param, void *ptr) override;
 
 	// internal helpers
 	void set_container(render_container &container) { m_container = &container; }
 	void realloc_screen_bitmaps();
-	void vblank_begin();
-	void vblank_end();
+	TIMER_CALLBACK_MEMBER(vblank_begin);
+	TIMER_CALLBACK_MEMBER(vblank_end);
+	TIMER_CALLBACK_MEMBER(first_scanline_tick);
+	TIMER_CALLBACK_MEMBER(scanline_tick);
 	void finalize_burnin();
 	void load_effect_overlay(const char *filename);
 	void update_scan_bitmap_size(int y);
@@ -473,7 +461,7 @@ private:
 	screen_update_rgb32_delegate m_screen_update_rgb32; // screen update callback (32-bit RGB)
 	devcb_write_line    m_screen_vblank;            // screen vblank line callback
 	devcb_write32       m_scanline_cb;              // screen scanline callback
-	optional_device<device_palette_interface> m_palette;      // our palette
+	optional_device<device_palette_interface> m_palette; // our palette
 	u32                 m_video_attributes;         // flags describing the video system
 	optional_memory_region m_svg_region;            // the region in which the svg data is in
 
@@ -497,6 +485,7 @@ private:
 	u8                  m_curbitmap;                // current bitmap index
 	u8                  m_curtexture;               // current texture index
 	bool                m_changed;                  // has this bitmap changed?
+	attotime            m_last_partial_reset;       // last time partial updates were reset
 	s32                 m_last_partial_scan;        // scanline of last partial update
 	s32                 m_partial_scan_hpos;        // horizontal pixel last rendered on this partial scanline
 	bitmap_argb32       m_screen_overlay_bitmap;    // screen overlay bitmap
@@ -516,7 +505,7 @@ private:
 	emu_timer *         m_scanline0_timer;          // scanline 0 timer
 	emu_timer *         m_scanline_timer;           // scanline timer
 	u64                 m_frame_number;             // the current frame number
-	u32                 m_partial_updates_this_frame;// partial update counter this frame
+	u32                 m_partial_updates_this_frame; // partial update counter this frame
 
 	bool                m_is_primary_screen;
 
@@ -529,7 +518,7 @@ private:
 
 		vblank_state_delegate       m_callback;
 	};
-	std::vector<std::unique_ptr<callback_item>> m_callback_list;     // list of VBLANK callbacks
+	std::vector<std::unique_ptr<callback_item>> m_callback_list; // list of VBLANK callbacks
 
 	// auto-sizing bitmaps
 	class auto_bitmap_item

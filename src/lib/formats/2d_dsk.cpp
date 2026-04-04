@@ -14,17 +14,17 @@ _2d_format::_2d_format() : wd177x_format(formats)
 {
 }
 
-const char *_2d_format::name() const
+const char *_2d_format::name() const noexcept
 {
 	return "2d";
 }
 
-const char *_2d_format::description() const
+const char *_2d_format::description() const noexcept
 {
 	return "2D disk image";
 }
 
-const char *_2d_format::extensions() const
+const char *_2d_format::extensions() const noexcept
 {
 	return "2d";
 }
@@ -38,4 +38,4 @@ const _2d_format::format _2d_format::formats[] =
 	{}
 };
 
-const floppy_format_type FLOPPY_2D_FORMAT = &floppy_image_format_creator<_2d_format>;
+const _2d_format FLOPPY_2D_FORMAT;

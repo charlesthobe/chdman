@@ -33,16 +33,32 @@ add_library(7z STATIC
     ${7z_dir}/C/BraIA64.c
     ${7z_dir}/C/CpuArch.c
     ${7z_dir}/C/Delta.c
+    ${7z_dir}/C/DllSecur.c
     ${7z_dir}/C/LzFind.c
+    ${7z_dir}/C/LzFindMt.c
+    ${7z_dir}/C/LzFindOpt.c
     ${7z_dir}/C/Lzma2Dec.c
+    ${7z_dir}/C/Lzma2DecMt.c
     ${7z_dir}/C/Lzma2Enc.c
     ${7z_dir}/C/Lzma86Dec.c
     ${7z_dir}/C/Lzma86Enc.c
     ${7z_dir}/C/LzmaDec.c
     ${7z_dir}/C/LzmaEnc.c
+    ${7z_dir}/C/LzmaLib.c
+    ${7z_dir}/C/MtCoder.c
+    ${7z_dir}/C/MtDec.c
     ${7z_dir}/C/Ppmd7.c
     ${7z_dir}/C/Ppmd7Dec.c
     ${7z_dir}/C/Ppmd7Enc.c
     ${7z_dir}/C/Sha256.c
+    ${7z_dir}/C/Sha256Opt.c
     ${7z_dir}/C/Sort.c
+    ${7z_dir}/C/SwapBytes.c
+    ${7z_dir}/C/Threads.c
+    ${7z_dir}/C/Xz.c
+    ${7z_dir}/C/XzCrc64.c
+    ${7z_dir}/C/XzCrc64Opt.c
+    ${7z_dir}/C/XzDec.c
+    ${7z_dir}/C/XzEnc.c
+    ${7z_dir}/C/XzIn.c
 )

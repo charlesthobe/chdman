@@ -53,6 +53,19 @@ void handler_entry::dump_map(std::vector<memory_entry> &map) const
 	fatalerror("dump_map called on non-dispatching class\n");
 }
 
+bool handler_entry::is_handler_in_map(std::vector<memory_entry> &map, offs_t begin, offs_t end, handler_entry *handler) const
+{
+	auto it = std::find_if(map.begin(), map.end(), [handler,begin,end](const memory_entry& e) {
+		return (e.entry == handler) && (e.start == begin) && (e.end == end);
+	} );
+
+	if(it == map.end()) {
+		return false;
+	}
+
+	return true;
+}
+
 void handler_entry::select_a(int slot)
 {
 	fatalerror("select_a called on non-view\n");
@@ -328,7 +341,7 @@ memory_region *memory_manager::region_alloc(std::string name, u32 length, u8 wid
 		fatalerror("region_alloc called with duplicate region name \"%s\"\n", name);
 
 	// allocate the region
-	return m_regionlist.emplace(name, std::make_unique<memory_region>(machine(), name, length, width, endian)).first->second.get();
+	return m_regionlist.emplace(name, std::make_unique<memory_region>(name, length, width, endian)).first->second.get();
 }
 
 
@@ -600,11 +613,29 @@ void address_space_installer::check_optimize_all(const char *function, int width
 				}
 		}
 
-		// 4. Ajusting the mirror
+		// 4. Adjusting the mirror
 		nmirror &= ~default_lowbits_mask;
 
 		// 5. Recompute changing_bits, it matters for the next optimization.  No need to round up through
 		changing_bits = nstart ^ nend;
+	}
+
+	if(nmask <= default_lowbits_mask && (nend - nstart) != default_lowbits_mask) {
+		// If the access size is lower than the bus width and the
+		// internal range limited, adjust to one full bus width and
+		// adjust the unitmask.  This can have a very positive
+		// interaction with the following block
+		assert(width < m_config.data_width());
+
+		u64 extra_mask;
+		if(m_config.endianness() == ENDIANNESS_BIG)
+			extra_mask = make_bitmask<u64>(m_config.data_width() - 8*(nstart & default_lowbits_mask)) ^ make_bitmask<u64>(m_config.data_width() - 8*(1+(nend & default_lowbits_mask)));
+		else
+			extra_mask = make_bitmask<u64>(8*(nstart & default_lowbits_mask)) ^ make_bitmask<u64>(8*(1+(nend & default_lowbits_mask)));
+		nstart &= ~default_lowbits_mask;
+		nend   |=  default_lowbits_mask;
+		nunitmask &= extra_mask;
+		changing_bits = default_lowbits_mask;
 	}
 
 	if(nmirror && !(nstart & changing_bits) && !((~nend) & changing_bits)) {
@@ -710,33 +741,33 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			// fall through to the RAM case otherwise
 			[[fallthrough]];
 		case AMH_RAM:
-			install_ram_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, readorwrite, entry.m_memory);
+			install_ram_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, entry.m_flags, readorwrite, entry.m_memory);
 			break;
 
 		case AMH_NOP:
-			unmap_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, readorwrite, true);
+			unmap_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, entry.m_flags, readorwrite, true);
 			break;
 
 		case AMH_UNMAP:
-			unmap_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, readorwrite, false);
+			unmap_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, entry.m_flags, readorwrite, false);
 			break;
 
 		case AMH_DEVICE_DELEGATE:
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
@@ -744,18 +775,18 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8m, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16m, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32m, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64m, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8m,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8m, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16m, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32m, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64m, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8m,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64m, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
@@ -763,18 +794,18 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8s, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16s, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32s, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64s, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8s,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8s, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16s, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32s, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64s, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8s,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64s, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
@@ -782,18 +813,18 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8sm, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16sm, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32sm, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64sm, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8sm,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8sm, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16sm, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32sm, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64sm, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8sm,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64sm, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
@@ -801,18 +832,18 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8mo, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16mo, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32mo, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64mo, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8mo,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8mo, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16mo, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32mo, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64mo, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8mo,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64mo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
@@ -820,23 +851,23 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 			if (readorwrite == read_or_write::READ)
 				switch (data.m_bits)
 				{
-					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8smo, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16smo, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32smo, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64smo, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto8smo,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto16smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto32smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_read_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_rproto64smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			else
 				switch (data.m_bits)
 				{
-					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8smo, entry.m_mask, entry.m_cswidth); break;
-					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16smo, entry.m_mask, entry.m_cswidth); break;
-					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32smo, entry.m_mask, entry.m_cswidth); break;
-					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64smo, entry.m_mask, entry.m_cswidth); break;
+					case 8:     install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto8smo,  entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 16:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto16smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 32:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto32smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
+					case 64:    install_write_handler(entry.m_addrstart, entry.m_addrend, entry.m_addrmask, entry.m_addrmirror, entry.m_addrselect, entry.m_wproto64smo, entry.m_mask, entry.m_cswidth, entry.m_flags); break;
 				}
 			break;
 
 		case AMH_PORT:
-			install_readwrite_port(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror,
+			install_readwrite_port(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, entry.m_flags,
 								   (readorwrite == read_or_write::READ) ? entry.m_devbase.subtag(data.m_tag) : "",
 								   (readorwrite == read_or_write::WRITE) ? entry.m_devbase.subtag(data.m_tag) : "");
 			break;
@@ -847,7 +878,7 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 				memory_bank *bank = m_manager.bank_find(tag);
 				if (!bank)
 					bank = m_manager.bank_alloc(entry.m_devbase, tag);
-				install_bank_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror,
+				install_bank_generic(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, entry.m_flags,
 									 (readorwrite == read_or_write::READ) ? bank : nullptr,
 									 (readorwrite == read_or_write::WRITE) ? bank : nullptr);
 			}
@@ -861,66 +892,98 @@ void address_space_installer::populate_map_entry(const address_map_entry &entry,
 				install_view(entry.m_addrstart, entry.m_addrend, entry.m_addrmirror, *entry.m_view);
 			break;
 	}
+
+	if (data.m_type == AMH_VIEW)
+		return;
+
+	offs_t lowbits_mask = (m_config.data_width() >> (3 - m_config.addr_shift())) - 1;
+
+	if (!entry.m_before_time.isnull()) {
+		auto d = entry.m_before_time;
+		d.resolve();
+		if (readorwrite == read_or_write::READ)
+			install_read_before_time(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+		else
+			install_write_before_time(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+	}
+
+	if (!entry.m_before_delay.isnull()) {
+		auto d = entry.m_before_delay;
+		d.resolve();
+		if (readorwrite == read_or_write::READ)
+			install_read_before_delay(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+		else
+			install_write_before_delay(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+	}
+
+	if (!entry.m_after_delay.isnull()) {
+		auto d = entry.m_after_delay;
+		d.resolve();
+		if (readorwrite == read_or_write::READ)
+			install_read_after_delay(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+		else
+			install_write_after_delay(entry.m_addrstart & ~lowbits_mask, entry.m_addrend | lowbits_mask, entry.m_addrmirror, d);
+	}
 }
 
 
 
-memory_passthrough_handler *address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 8-bits wide bus read tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 16-bits wide bus read tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 32-bits wide bus read tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_read_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 64-bits wide bus read tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 8-bits wide bus write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 16-bits wide bus write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 32-bits wide bus write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_write_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 64-bits wide bus write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tapr, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tapw, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tapr, std::function<void (offs_t offset, u8  &data, u8  mem_mask)> tapw, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 8-bits wide bus read/write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tapr, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tapw, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tapr, std::function<void (offs_t offset, u16 &data, u16 mem_mask)> tapw, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 16-bits wide bus read/write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tapr, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tapr, std::function<void (offs_t offset, u32 &data, u32 mem_mask)> tap, memory_passthrough_handler *mph)
 {
 	fatalerror("Tryingw to install a 32-bits wide bus read/write tap in a %d-bits wide bus\n", data_width());
 }
 
-memory_passthrough_handler *address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tapr, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tapw, memory_passthrough_handler *mph)
+memory_passthrough_handler address_space_installer::install_readwrite_tap(offs_t addrstart, offs_t addrend, offs_t addrmirror, std::string name, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tapr, std::function<void (offs_t offset, u64 &data, u64 mem_mask)> tapw, memory_passthrough_handler *mph)
 {
 	fatalerror("Trying to install a 64-bits wide bus read/write tap in a %d-bits wide bus\n", data_width());
 }
@@ -984,7 +1047,7 @@ void memory_bank::set_entry(int entrynum)
 
 	// validate
 	if (entrynum < 0 || entrynum >= int(m_entries.size()))
-		throw emu_fatalerror("memory_bank::set_entry called with out-of-range entry %d", entrynum);
+		throw emu_fatalerror("memory_bank::set_entry called for bank '%s' with out-of-range entry %d", m_tag, entrynum);
 	if (m_entries[entrynum] == nullptr)
 		throw emu_fatalerror("memory_bank::set_entry called for bank '%s' with invalid bank entry %d", m_tag, entrynum);
 
@@ -1034,15 +1097,18 @@ void memory_bank::configure_entries(int startentry, int numentries, void *base, 
 //  memory_region - constructor
 //-------------------------------------------------
 
-memory_region::memory_region(running_machine &machine, std::string name, u32 length, u8 width, endianness_t endian)
-	: m_machine(machine),
-		m_name(std::move(name)),
-		m_buffer(length),
-		m_endianness(endian),
-		m_bitwidth(width * 8),
-		m_bytewidth(width)
+memory_region::memory_region(std::string name, u32 length, u8 width, endianness_t endian) :
+	m_name(std::move(name)),
+	m_buffer(length ? std::malloc(length) : nullptr),
+	m_length(length),
+	m_endianness(endian),
+	m_bitwidth(width * 8),
+	m_bytewidth(width)
 {
-	assert(width == 1 || width == 2 || width == 4 || width == 8);
+	assert((width == 1) || (width == 2) || (width == 4) || (width == 8));
+	assert(!(length % width));
+	if (length && !m_buffer)
+		throw std::bad_alloc();
 }
 
 std::string memory_share::compare(u8 width, size_t bytes, endianness_t endianness) const

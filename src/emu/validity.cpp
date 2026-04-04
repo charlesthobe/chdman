@@ -11,13 +11,18 @@
 #include "emu.h"
 #include "validity.h"
 
-#include "corestr.h"
 #include "emuopts.h"
+#include "main.h"
 #include "romload.h"
+#include "speaker.h"
 #include "video/rgbutil.h"
+
+#include "corestr.h"
+#include "path.h"
 #include "unicode.h"
 
 #include <cctype>
+#include <sstream>
 #include <type_traits>
 #include <typeinfo>
 
@@ -47,12 +52,10 @@ using test_delegate = delegate<char (void const *&)>;
 //  type
 //-------------------------------------------------
 
-#if !defined(_LIBCPP_VERSION) || (_LIBCPP_VERSION >= 7000)
 test_delegate make_diamond_class_delegate(char (diamond_inheritance::*func)(void const *&), diamond_inheritance *obj)
 {
 	return test_delegate(func, obj);
 }
-#endif // !defined(_LIBCPP_VERSION) || (_LIBCPP_VERSION >= 7000)
 
 
 //-------------------------------------------------
@@ -171,13 +174,6 @@ void validate_integer_semantics()
 	if (a16 >> 1 != -2) osd_printf_error("s16 right shift must be arithmetic\n");
 	if (a32 >> 1 != -2) osd_printf_error("s32 right shift must be arithmetic\n");
 	if (a64 >> 1 != -2) osd_printf_error("s64 right shift must be arithmetic\n");
-
-	// check pointer size
-#ifdef PTR64
-	static_assert(sizeof(void *) == 8, "PTR64 flag enabled, but was compiled for 32-bit target\n");
-#else
-	static_assert(sizeof(void *) == 4, "PTR64 flag not enabled, but was compiled for 64-bit target\n");
-#endif
 
 	// TODO: check if this is actually working
 	// check endianness definition
@@ -319,6 +315,34 @@ void validate_inlines()
 		if (resultu8 != i)
 			osd_printf_error("Error testing count_leading_ones_32 %08x=%02x (expected %02x)\n", t, resultu8, i);
 	}
+
+	u32 expected32 = testu32a << 1 | testu32a >> 31;
+	for (int i = -33; i <= 33; i++)
+	{
+		u32 resultu32r = rotr_32(testu32a, i);
+		u32 resultu32l = rotl_32(testu32a, -i);
+
+		if (resultu32r != expected32)
+			osd_printf_error("Error testing rotr_32 %08x, %d=%08x (expected %08x)\n", u32(testu32a), i, resultu32r, expected32);
+		if (resultu32l != expected32)
+			osd_printf_error("Error testing rotl_32 %08x, %d=%08x (expected %08x)\n", u32(testu32a), -i, resultu32l, expected32);
+
+		expected32 = expected32 >> 1 | expected32 << 31;
+	}
+
+	u64 expected64 = testu64a << 1 | testu64a >> 63;
+	for (int i = -65; i <= 65; i++)
+	{
+		u64 resultu64r = rotr_64(testu64a, i);
+		u64 resultu64l = rotl_64(testu64a, -i);
+
+		if (resultu64r != expected64)
+			osd_printf_error("Error testing rotr_64 %016x, %d=%016x (expected %016x)\n", u64(testu64a), i, resultu64r, expected64);
+		if (resultu64l != expected64)
+			osd_printf_error("Error testing rotl_64 %016x, %d=%016x (expected %016x)\n", u64(testu64a), -i, resultu64l, expected64);
+
+		expected64 = expected64 >> 1 | expected64 << 63;
+	}
 }
 
 
@@ -368,10 +392,10 @@ void validate_rgb()
 	volatile s32 expected_a, expected_r, expected_g, expected_b;
 	volatile s32 actual_a, actual_r, actual_g, actual_b;
 	volatile s32 imm;
-	rgbaint_t rgb, other;
+	rgbaint_t rgb;
 	rgb_t packed;
 	auto check_expected =
-			[&] (const char *desc)
+			[&expected_a, &expected_r, &expected_g, &expected_b, &rgb] (const char *desc)
 			{
 				const volatile s32 a = rgb.get_a32();
 				const volatile s32 r = rgb.get_r32();
@@ -804,6 +828,15 @@ void validate_rgb()
 	rgb.shl(rgbaint_t(19, 3, 21, 6));
 	check_expected("rgbaint_t::shl");
 
+	// test shift left out of range
+	expected_a = (actual_a = random_i32()) & 0;
+	expected_r = (actual_r = random_i32()) & 0;
+	expected_g = (actual_g = random_i32()) & 0;
+	expected_b = (actual_b = random_i32()) & 0;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.shl(rgbaint_t(-19, 32, -21, 38));
+	check_expected("rgbaint_t::shl");
+
 	// test shift left immediate
 	expected_a = (actual_a = random_i32()) << 7;
 	expected_r = (actual_r = random_i32()) << 7;
@@ -811,6 +844,15 @@ void validate_rgb()
 	expected_b = (actual_b = random_i32()) << 7;
 	rgb.set(actual_a, actual_r, actual_g, actual_b);
 	rgb.shl_imm(7);
+	check_expected("rgbaint_t::shl_imm");
+
+	// test shift left immediate out of range
+	expected_a = (actual_a = random_i32()) & 0;
+	expected_r = (actual_r = random_i32()) & 0;
+	expected_g = (actual_g = random_i32()) & 0;
+	expected_b = (actual_b = random_i32()) & 0;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.shl_imm(32);
 	check_expected("rgbaint_t::shl_imm");
 
 	// test logical shift right
@@ -831,6 +873,15 @@ void validate_rgb()
 	rgb.shr(rgbaint_t(21, 13, 11, 17));
 	check_expected("rgbaint_t::shr");
 
+	// test logical shift right out of range
+	expected_a = (actual_a = random_i32()) & 0;
+	expected_r = (actual_r = random_i32()) & 0;
+	expected_g = (actual_g = random_i32()) & 0;
+	expected_b = (actual_b = random_i32()) & 0;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.shr(rgbaint_t(40, -18, -26, 32));
+	check_expected("rgbaint_t::shr");
+
 	// test logical shift right immediate
 	expected_a = s32(u32(actual_a = random_i32()) >> 5);
 	expected_r = s32(u32(actual_r = random_i32()) >> 5);
@@ -847,6 +898,15 @@ void validate_rgb()
 	expected_b = s32(u32(actual_b = -actual_b) >> 15);
 	rgb.set(actual_a, actual_r, actual_g, actual_b);
 	rgb.shr_imm(15);
+	check_expected("rgbaint_t::shr_imm");
+
+	// test logical shift right immediate out of range
+	expected_a = (actual_a = random_i32()) & 0;
+	expected_r = (actual_r = random_i32()) & 0;
+	expected_g = (actual_g = random_i32()) & 0;
+	expected_b = (actual_b = random_i32()) & 0;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.shr_imm(35);
 	check_expected("rgbaint_t::shr_imm");
 
 	// test arithmetic shift right
@@ -867,6 +927,15 @@ void validate_rgb()
 	rgb.sra(rgbaint_t(1, 29, 10, 22));
 	check_expected("rgbaint_t::sra");
 
+	// test arithmetic shift right out of range
+	expected_a = (actual_a = random_i32()) >> 31;
+	expected_r = (actual_r = random_i32()) >> 31;
+	expected_g = (actual_g = random_i32()) >> 31;
+	expected_b = (actual_b = random_i32()) >> 31;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.sra(rgbaint_t(-16, -20, 46, 32));
+	check_expected("rgbaint_t::sra");
+
 	// test arithmetic shift right immediate (method)
 	expected_a = (actual_a = random_i32()) >> 12;
 	expected_r = (actual_r = random_i32()) >> 12;
@@ -885,6 +954,15 @@ void validate_rgb()
 	rgb.sra_imm(9);
 	check_expected("rgbaint_t::sra_imm");
 
+	// test arithmetic shift right immediate out of range (method)
+	expected_a = (actual_a = random_i32()) >> 31;
+	expected_r = (actual_r = random_i32()) >> 31;
+	expected_g = (actual_g = random_i32()) >> 31;
+	expected_b = (actual_b = random_i32()) >> 31;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb.sra_imm(38);
+	check_expected("rgbaint_t::sra_imm");
+
 	// test arithmetic shift right immediate (operator)
 	expected_a = (actual_a = random_i32()) >> 7;
 	expected_r = (actual_r = random_i32()) >> 7;
@@ -901,6 +979,15 @@ void validate_rgb()
 	expected_b = (actual_b = -actual_b) >> 11;
 	rgb.set(actual_a, actual_r, actual_g, actual_b);
 	rgb >>= 11;
+	check_expected("rgbaint_t::operator>>=");
+
+	// test arithmetic shift right immediate out of range (operator)
+	expected_a = (actual_a = random_i32()) >> 31;
+	expected_r = (actual_r = random_i32()) >> 31;
+	expected_g = (actual_g = random_i32()) >> 31;
+	expected_b = (actual_b = random_i32()) >> 31;
+	rgb.set(actual_a, actual_r, actual_g, actual_b);
+	rgb >>= 41;
 	check_expected("rgbaint_t::operator>>=");
 
 	// test RGB equality comparison
@@ -1190,22 +1277,25 @@ void validate_rgb()
 
 	// test bilinear_filter and bilinear_filter_rgbaint
 	// SSE implementation carries more internal precision between the bilinear stages
-#if defined(MAME_RGB_HIGH_PRECISION)
-	const int first_shift = 1;
-#else
-	const int first_shift = 8;
-#endif
+	auto const filter_expected =
+			[] (u8 x00, u8 x01, u8 x10, u8 x11, u8 u, u8 v)
+			{
+				const unsigned shift_inner = rgbaint_t::FILTER_SHIFT_INNER;
+				const unsigned shift_outer = rgbaint_t::FILTER_SHIFT_OUTER;
+
+				const unsigned upper = (((x00 * (256U - u)) >> shift_inner) + ((x01 * u) >> shift_inner)) >> shift_outer;
+				const unsigned lower = (((x10 * (256U - u)) >> shift_inner) + ((x11 * u) >> shift_inner)) >> shift_outer;
+				return u8(((upper * (256U - v)) + (lower * v)) >> (16 - shift_inner - shift_outer));
+			};
 	for (int index = 0; index < 1000; index++)
 	{
-		u8 u, v;
 		rgbaint_t rgb_point[4];
-		u32 top_row, bottom_row;
-
 		for (int i = 0; i < 4; i++)
 		{
 			rgb_point[i].set(random_u32());
 		}
 
+		u8 u, v;
 		switch (index)
 		{
 			case 0: u = 0; v = 0; break;
@@ -1220,21 +1310,10 @@ void validate_rgb()
 				break;
 		}
 
-		top_row = (rgb_point[0].get_a() * (256 - u) + rgb_point[1].get_a() * u) >> first_shift;
-		bottom_row = (rgb_point[2].get_a() * (256 - u) + rgb_point[3].get_a() * u) >> first_shift;
-		expected_a = (top_row * (256 - v) + bottom_row * v) >> (16 - first_shift);
-
-		top_row = (rgb_point[0].get_r() * (256 - u) + rgb_point[1].get_r() * u) >> first_shift;
-		bottom_row = (rgb_point[2].get_r() * (256 - u) + rgb_point[3].get_r() * u) >> first_shift;
-		expected_r = (top_row * (256 - v) + bottom_row * v) >> (16 - first_shift);
-
-		top_row = (rgb_point[0].get_g() * (256 - u) + rgb_point[1].get_g() * u) >> first_shift;
-		bottom_row = (rgb_point[2].get_g() * (256 - u) + rgb_point[3].get_g() * u) >> first_shift;
-		expected_g = (top_row * (256 - v) + bottom_row * v) >> (16 - first_shift);
-
-		top_row = (rgb_point[0].get_b() * (256 - u) + rgb_point[1].get_b() * u) >> first_shift;
-		bottom_row = (rgb_point[2].get_b() * (256 - u) + rgb_point[3].get_b() * u) >> first_shift;
-		expected_b = (top_row * (256 - v) + bottom_row * v) >> (16 - first_shift);
+		expected_a = filter_expected(rgb_point[0].get_a(), rgb_point[1].get_a(), rgb_point[2].get_a(), rgb_point[3].get_a(), u, v);
+		expected_r = filter_expected(rgb_point[0].get_r(), rgb_point[1].get_r(), rgb_point[2].get_r(), rgb_point[3].get_r(), u, v);
+		expected_g = filter_expected(rgb_point[0].get_g(), rgb_point[1].get_g(), rgb_point[2].get_g(), rgb_point[3].get_g(), u, v);
+		expected_b = filter_expected(rgb_point[0].get_b(), rgb_point[1].get_b(), rgb_point[2].get_b(), rgb_point[3].get_b(), u, v);
 
 		imm = rgbaint_t::bilinear_filter(rgb_point[0].to_rgba(), rgb_point[1].to_rgba(), rgb_point[2].to_rgba(), rgb_point[3].to_rgba(), u, v);
 		rgb.set(imm);
@@ -1393,7 +1472,6 @@ void validate_delegates_mfp()
 	if (&o != addr)
 		osd_printf_error("Error testing delegate this pointer adjustment for virtual member function through base class pointer %p -> %p (expected %p)\n", static_cast<void const *>(static_cast<base_b *>(&o)), addr, static_cast<void const *>(&o));
 
-#if !defined(_LIBCPP_VERSION) || (_LIBCPP_VERSION >= 7000)
 	// test creating delegates for a forward-declared class
 	cb1 = make_diamond_class_delegate(&diamond_inheritance::get_derived_a, &d);
 	cb2 = make_diamond_class_delegate(&diamond_inheritance::get_derived_b, &d);
@@ -1423,7 +1501,6 @@ void validate_delegates_mfp()
 	if (static_cast<virtual_base *>(&d) != addr)
 		osd_printf_error("Error testing delegate this pointer adjustment for incomplete class %p -> %p (expected %p)\n", static_cast<void const *>(&d), addr, static_cast<void const *>(static_cast<virtual_base *>(&d)));
 #endif // defined(_MSC_VER) && !defined(__clang__)
-#endif // !defined(_LIBCPP_VERSION) || (_LIBCPP_VERSION >= 7000)
 }
 
 
@@ -1868,6 +1945,7 @@ void validity_checker::validate_begin()
 	m_defstr_map.clear();
 	m_region_map.clear();
 	m_ioport_set.clear();
+	m_slotcard_set.clear();
 
 	// reset internal state
 	m_errors = 0;
@@ -2044,7 +2122,7 @@ void validity_checker::validate_driver(device_t &root)
 	device_t::feature_type const imperfect(m_current_driver->type.imperfect_features());
 	if (!(m_current_driver->flags & (machine_flags::IS_BIOS_ROOT | machine_flags::NO_SOUND_HW)) && !(unemulated & device_t::feature::SOUND))
 	{
-		sound_interface_enumerator iter(root);
+		speaker_device_enumerator iter(root);
 		if (!iter.first())
 			osd_printf_error("Driver is missing MACHINE_NO_SOUND or MACHINE_NO_SOUND_HW flag\n");
 	}
@@ -2058,6 +2136,49 @@ void validity_checker::validate_driver(device_t &root)
 		osd_printf_error("Driver cannot have features that are both unemulated and imperfect (0x%08X)\n", util::underlying_value(unemulated & imperfect));
 	if ((m_current_driver->flags & machine_flags::NO_SOUND_HW) && ((unemulated | imperfect) & device_t::feature::SOUND))
 		osd_printf_error("Machine without sound hardware cannot have unemulated/imperfect sound\n");
+
+	// catch systems marked as supporting save states that contain devices that don't support save states
+	if (!(m_current_driver->type.emulation_flags() & device_t::flags::SAVE_UNSUPPORTED))
+	{
+		std::set<std::add_pointer_t<device_type> > nosave;
+		device_enumerator iter(root);
+		std::string_view cardtag;
+		for (auto &device : iter)
+		{
+			// ignore any children of a slot card
+			if (!cardtag.empty())
+			{
+				std::string_view tag(device.tag());
+				if ((tag.length() > cardtag.length()) && (tag.substr(0, cardtag.length()) == cardtag) && tag[cardtag.length()] == ':')
+					continue;
+				else
+					cardtag = std::string_view();
+			}
+
+			// check to see if this is a slot card
+			device_t *const parent(device.owner());
+			if (parent)
+			{
+				device_slot_interface *slot;
+				parent->interface(slot);
+				if (slot && (slot->get_card_device() == &device))
+				{
+					cardtag = device.tag();
+					continue;
+				}
+			}
+
+			if (device.type().emulation_flags() & device_t::flags::SAVE_UNSUPPORTED)
+				nosave.emplace(&device.type());
+		}
+		if (!nosave.empty())
+		{
+			std::ostringstream buf;
+			for (auto const &devtype : nosave)
+				util::stream_format(buf, "%s(%s) %s\n", core_filename_extract_base(devtype->source()), devtype->shortname(), devtype->fullname());
+			osd_printf_error("Machine is marked as supporting save states but uses devices that lack save state support:\n%s", std::move(buf).str());
+		}
+	}
 }
 
 
@@ -2079,7 +2200,6 @@ void validity_checker::validate_roms(device_t &root)
 		u32 current_length = 0;
 		int items_since_region = 1;
 		int last_bios = 0, max_bios = 0;
-		int total_files = 0;
 		std::unordered_map<std::string, int> bios_names;
 		std::unordered_map<std::string, std::string> bios_descs;
 		char const *defbios = nullptr;
@@ -2113,34 +2233,46 @@ void validity_checker::validate_roms(device_t &root)
 				current_length = ROMREGION_GETLENGTH(romp);
 				if (!m_region_map.emplace(fulltag, current_length).second)
 					osd_printf_error("Multiple ROM_REGIONs with the same tag '%s' defined\n", fulltag);
+				if (current_length == 0)
+					osd_printf_error("ROM region '%s' has zero length\n", fulltag);
 			}
 			else if (ROMENTRY_ISSYSTEM_BIOS(romp)) // If this is a system bios, make sure it is using the next available bios number
 			{
 				int const bios_flags = ROM_GETBIOSFLAGS(romp);
 				char const *const biosname = romp->name;
 				if (bios_flags != last_bios + 1)
-					osd_printf_error("Non-sequential BIOS %s (specified as %d, expected to be %d)\n", biosname, bios_flags - 1, last_bios);
+					osd_printf_error("Non-sequential BIOS %s (specified as %d, expected to be %d)\n", biosname ? biosname : "UNNAMED", bios_flags - 1, last_bios);
 				last_bios = bios_flags;
 
 				// validate the name
-				if (strlen(biosname) > 16)
-					osd_printf_error("BIOS name %s exceeds maximum 16 characters\n", biosname);
-				for (char const *s = biosname; *s; ++s)
+				if (!biosname || biosname[0] == 0)
+					osd_printf_error("BIOS %d is missing a name\n", bios_flags - 1);
+				else
 				{
-					if (((*s < '0') || (*s > '9')) && ((*s < 'a') || (*s > 'z')) && (*s != '.') && (*s != '_') && (*s != '-'))
+					if (strlen(biosname) > 16)
+						osd_printf_error("BIOS name %s exceeds maximum 16 characters\n", biosname);
+					for (char const *s = biosname; *s; ++s)
 					{
-						osd_printf_error("BIOS name %s contains invalid characters\n", biosname);
-						break;
+						if (((*s < '0') || (*s > '9')) && ((*s < 'a') || (*s > 'z')) && (*s != '.') && (*s != '_') && (*s != '-'))
+						{
+							osd_printf_error("BIOS name %s contains invalid characters\n", biosname);
+							break;
+						}
+					}
+
+					// check for duplicate names/descriptions
+					auto const nameins = bios_names.emplace(biosname, bios_flags);
+					if (!nameins.second)
+						osd_printf_error("Duplicate BIOS name %s specified (%d and %d)\n", biosname, nameins.first->second, bios_flags - 1);
+					if (!romp->hashdata || romp->hashdata[0] == 0)
+						osd_printf_error("BIOS %s has empty description\n", biosname);
+					else
+					{
+						auto const descins = bios_descs.emplace(romp->hashdata, biosname);
+						if (!descins.second)
+							osd_printf_error("BIOS %s has duplicate description '%s' (was %s)\n", biosname, romp->hashdata, descins.first->second);
 					}
 				}
-
-				// check for duplicate names/descriptions
-				auto const nameins = bios_names.emplace(biosname, bios_flags);
-				if (!nameins.second)
-					osd_printf_error("Duplicate BIOS name %s specified (%d and %d)\n", biosname, nameins.first->second, bios_flags - 1);
-				auto const descins = bios_descs.emplace(romp->hashdata, biosname);
-				if (!descins.second)
-					osd_printf_error("BIOS %s has duplicate description '%s' (was %s)\n", biosname, romp->hashdata, descins.first->second);
 			}
 			else if (ROMENTRY_ISDEFAULT_BIOS(romp)) // if this is a default BIOS setting, remember it so it to check at the end
 			{
@@ -2150,7 +2282,6 @@ void validity_checker::validate_roms(device_t &root)
 			{
 				// track the last filename we found
 				last_name = romp->name;
-				total_files++;
 				max_bios = std::max<int>(max_bios, ROM_GETBIOSFLAGS(romp));
 
 				// validate the name
@@ -2292,8 +2423,9 @@ void validity_checker::validate_analog_input_field(const ioport_field &field)
 
 void validity_checker::validate_dip_settings(const ioport_field &field)
 {
-	const char *demo_sounds = ioport_string_from_index(INPUT_STRING_Demo_Sounds);
-	const char *flipscreen = ioport_string_from_index(INPUT_STRING_Flip_Screen);
+	char const *const demo_sounds = ioport_string_from_index(INPUT_STRING_Demo_Sounds);
+	char const *const flipscreen = ioport_string_from_index(INPUT_STRING_Flip_Screen);
+	char const *const name = field.specific_name() ? field.specific_name() : "UNNAMED";
 	u8 coin_list[__input_string_coinage_end + 1 - __input_string_coinage_start] = { 0 };
 	bool coin_error = false;
 
@@ -2306,15 +2438,15 @@ void validity_checker::validate_dip_settings(const ioport_field &field)
 			coin_list[strindex - __input_string_coinage_start] = 1;
 
 		// make sure demo sounds default to on
-		if (field.name() == demo_sounds && strindex == INPUT_STRING_On && field.defvalue() != setting->value())
+		if (name == demo_sounds && strindex == INPUT_STRING_On && field.defvalue() != setting->value())
 			osd_printf_error("Demo Sounds must default to On\n");
 
 		// check for bad demo sounds options
-		if (field.name() == demo_sounds && (strindex == INPUT_STRING_Yes || strindex == INPUT_STRING_No))
+		if (name == demo_sounds && (strindex == INPUT_STRING_Yes || strindex == INPUT_STRING_No))
 			osd_printf_error("Demo Sounds option must be Off/On, not %s\n", setting->name());
 
 		// check for bad flip screen options
-		if (field.name() == flipscreen && (strindex == INPUT_STRING_Yes || strindex == INPUT_STRING_No))
+		if (name == flipscreen && (strindex == INPUT_STRING_Yes || strindex == INPUT_STRING_No))
 			osd_printf_error("Flip Screen option must be Off/On, not %s\n", setting->name());
 
 		// if we have a neighbor, compare ourselves to him
@@ -2324,21 +2456,21 @@ void validity_checker::validate_dip_settings(const ioport_field &field)
 			// check for inverted off/on DIP switch order
 			int next_strindex = get_defstr_index(nextsetting->name(), true);
 			if (strindex == INPUT_STRING_On && next_strindex == INPUT_STRING_Off)
-				osd_printf_error("%s option must have Off/On options in the order: Off, On\n", field.name());
+				osd_printf_error("%s option must have Off/On options in the order: Off, On\n", name);
 
 			// check for inverted yes/no DIP switch order
 			else if (strindex == INPUT_STRING_Yes && next_strindex == INPUT_STRING_No)
-				osd_printf_error("%s option must have Yes/No options in the order: No, Yes\n", field.name());
+				osd_printf_error("%s option must have Yes/No options in the order: No, Yes\n", name);
 
 			// check for inverted upright/cocktail DIP switch order
 			else if (strindex == INPUT_STRING_Cocktail && next_strindex == INPUT_STRING_Upright)
-				osd_printf_error("%s option must have Upright/Cocktail options in the order: Upright, Cocktail\n", field.name());
+				osd_printf_error("%s option must have Upright/Cocktail options in the order: Upright, Cocktail\n", name);
 
 			// check for proper coin ordering
 			else if (strindex >= __input_string_coinage_start && strindex <= __input_string_coinage_end && next_strindex >= __input_string_coinage_start && next_strindex <= __input_string_coinage_end &&
 						strindex >= next_strindex && setting->condition() == nextsetting->condition())
 			{
-				osd_printf_error("%s option has unsorted coinage %s > %s\n", field.name(), setting->name(), nextsetting->name());
+				osd_printf_error("%s option has unsorted coinage %s > %s\n", name, setting->name(), nextsetting->name());
 				coin_error = true;
 			}
 		}
@@ -2362,6 +2494,12 @@ void validity_checker::validate_dip_settings(const ioport_field &field)
 
 void validity_checker::validate_condition(const ioport_condition &condition, device_t &device)
 {
+	if (condition.tag() == nullptr)
+	{
+		osd_printf_error("Condition referencing null ioport tag\n");
+		return;
+	}
+
 	// resolve the tag, then find a matching port
 	if (m_ioport_set.find(device.subtag(condition.tag())) == m_ioport_set.end())
 		osd_printf_error("Condition referencing non-existent ioport tag '%s'\n", condition.tag());
@@ -2386,12 +2524,13 @@ void validity_checker::validate_inputs(device_t &root)
 
 		// allocate the input ports
 		ioport_list portlist;
-		std::string errorbuf;
-		portlist.append(device, errorbuf);
-
-		// report any errors during construction
-		if (!errorbuf.empty())
-			osd_printf_error("I/O port error during construction:\n%s\n", errorbuf);
+		{
+			// report any errors during construction
+			std::ostringstream errorbuf;
+			portlist.append(device, errorbuf);
+			if (errorbuf.tellp())
+				osd_printf_error("I/O port error during construction:\n%s\n", std::move(errorbuf).str());
+		}
 
 		// do a first pass over ports to add their names and find duplicates
 		for (auto &port : portlist)
@@ -2426,34 +2565,43 @@ void validity_checker::validate_inputs(device_t &root)
 				if (field.is_analog())
 					validate_analog_input_field(field);
 
-				// look for invalid (0) types which should be mapped to IPT_OTHER
-				if (field.type() == IPT_INVALID)
-					osd_printf_error("Field has an invalid type (0); use IPT_OTHER instead\n");
-
-				if (field.type() == IPT_SPECIAL)
-					osd_printf_error("Field has an invalid type IPT_SPECIAL\n");
-
-				// verify dip switches
-				if (field.type() == IPT_DIPSWITCH)
+				// checks based on field type
+				if ((field.type() > IPT_UI_FIRST) && (field.type() < IPT_UI_LAST))
 				{
-					// dip switch fields must have a specific name
+					osd_printf_error("Field has invalid UI control type\n");
+				}
+				else if (field.type() == IPT_INVALID)
+				{
+					osd_printf_error("Field has an invalid type (0); use IPT_OTHER instead\n");
+				}
+				else if (field.type() == IPT_SPECIAL)
+				{
+					osd_printf_error("Field has an invalid type IPT_SPECIAL\n");
+				}
+				else if (field.type() == IPT_DIPSWITCH)
+				{
+					// DIP switch fields must have a specific name
 					if (field.specific_name() == nullptr)
 						osd_printf_error("DIP switch has no specific name\n");
 
 					// verify the settings list
 					validate_dip_settings(field);
 				}
-
-				// verify config settings
-				if (field.type() == IPT_CONFIG)
+				else if (field.type() == IPT_CONFIG)
 				{
 					// config fields must have a specific name
 					if (field.specific_name() == nullptr)
 						osd_printf_error("Config switch has no specific name\n");
 				}
+				else if (field.type() == IPT_ADJUSTER)
+				{
+					// adjuster fields must have a specific name
+					if (field.specific_name() == nullptr)
+						osd_printf_error("Adjuster has no specific name\n");
+				}
 
 				// verify names
-				const char *name = field.specific_name();
+				char const *const name = field.specific_name();
 				if (name != nullptr)
 				{
 					// check for empty string
@@ -2467,9 +2615,6 @@ void validity_checker::validate_inputs(device_t &root)
 					// check for invalid UTF-8
 					if (!utf8_is_valid_string(name))
 						osd_printf_error("Field '%s' has invalid characters\n", name);
-
-					// look up the string and print an error if default strings are not used
-					/*strindex =get_defstr_index(defstr_map, name, driver, &error);*/
 				}
 
 				// verify conditions on the field
@@ -2491,8 +2636,8 @@ void validity_checker::validate_inputs(device_t &root)
 						{
 							osd_printf_error("Field '%s' has non-character U+%04X in PORT_CHAR(%d)\n",
 									name,
-									(unsigned)code,
-									(int)code);
+									uint32_t(code),
+									int32_t(code));
 						}
 					}
 				}
@@ -2500,6 +2645,34 @@ void validity_checker::validate_inputs(device_t &root)
 
 			// done with this port
 			m_current_ioport = nullptr;
+		}
+
+		// validate the default settings
+		const input_device_default *def = device.input_ports_defaults();
+		if (def != nullptr)
+		{
+			for ( ; def->tag; def++)
+			{
+				if (def->defvalue & ~def->mask)
+					osd_printf_error("Default value 0x%x for field of port '%s' lies outside mask 0x%x\n", def->defvalue, def->mask);
+
+				const auto it = portlist.find(device.subtag(def->tag));
+				if (portlist.end() == it)
+				{
+					osd_printf_error("Default specified for nonexistent port '%s'\n", def->tag);
+				}
+				else
+				{
+					const auto &fields = it->second->fields();
+					if (fields.end() == std::find_if(fields.begin(), fields.end(), [def] (const ioport_field &field) { return field.mask() == def->mask; }))
+					{
+						osd_printf_error(
+								"Default value specified for field with mask 0x%x in port '%s' but no corresponding field found\n",
+								def->mask,
+								def->tag);
+					}
+				}
+			}
 		}
 
 		// done with this device
@@ -2549,6 +2722,10 @@ void validity_checker::validate_devices(machine_config &config)
 				if (slot->default_option() != nullptr && option.first == slot->default_option())
 					continue;
 
+				// if we need to save time, instantiate and validate each slot card type at most once
+				if (m_quick && !m_slotcard_set.insert(option.second->devtype().shortname()).second)
+					continue;
+
 				m_checking_card = true;
 				device_t *card;
 				{
@@ -2558,9 +2735,12 @@ void validity_checker::validate_devices(machine_config &config)
 					const char *const def_bios = option.second->default_bios();
 					if (def_bios)
 						card->set_default_bios_tag(def_bios);
-					auto additions = option.second->machine_config();
+					auto const &additions = option.second->machine_config();
 					if (additions)
 						additions(card);
+					input_device_default const *input_def = option.second->input_device_defaults();
+					if (input_def)
+						card->set_input_default(input_def);
 				}
 
 				for (device_slot_interface &subslot : slot_interface_enumerator(*card))
@@ -2586,6 +2766,7 @@ void validity_checker::validate_devices(machine_config &config)
 				for (device_t &card_dev : device_enumerator(*card))
 					card_dev.config_complete();
 				validate_roms(*card);
+				validate_inputs(*card);
 
 				for (device_t &card_dev : device_enumerator(*card))
 				{
@@ -2774,7 +2955,7 @@ void validity_checker::build_output_prefix(std::ostream &str) const
 //  error_output - error message output override
 //-------------------------------------------------
 
-void validity_checker::output_callback(osd_output_channel channel, const util::format_argument_pack<std::ostream> &args)
+void validity_checker::output_callback(osd_output_channel channel, const util::format_argument_pack<char> &args)
 {
 	std::ostringstream output;
 	switch (channel)

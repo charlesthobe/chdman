@@ -14,8 +14,11 @@
 #include "dfi_dsk.h"
 
 #include "ioprocs.h"
+#include "multibyte.h"
 
 #include "osdcore.h" // osd_printf_*
+
+#include <tuple>
 
 
 #define NUMBER_OF_MULTIREADS 3
@@ -39,41 +42,43 @@ dfi_format::dfi_format() : floppy_image_format_t()
 {
 }
 
-const char *dfi_format::name() const
+const char *dfi_format::name() const noexcept
 {
 	return "dfi";
 }
 
-const char *dfi_format::description() const
+const char *dfi_format::description() const noexcept
 {
 	return "DiscFerret flux dump format";
 }
 
-const char *dfi_format::extensions() const
+const char *dfi_format::extensions() const noexcept
 {
 	return "dfi";
 }
 
-bool dfi_format::supports_save() const
-{
-	return false;
-}
-
-int dfi_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int dfi_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	char sign[4];
-	size_t actual;
-	io.read_at(0, sign, 4, actual);
-	return memcmp(sign, "DFE2", 4) ? 0 : 100;
+	auto const [err, actual] = read_at(io, 0, sign, 4);
+	if(err || (4 != actual)) {
+		return 0;
+	}
+	return memcmp(sign, "DFE2", 4) ? 0 : FIFID_SIGN;
 }
 
-bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
+	std::error_condition err;
 	size_t actual;
+
 	char sign[4];
-	io.read_at(0, sign, 4, actual);
+	std::tie(err, actual) = read_at(io, 0, sign, 4);
+	if(err || (4 != actual)) {
+		return false;
+	}
 	if(memcmp(sign, "DFER", 4) == 0) {
-		osd_printf_error("dfi_dsk: Old type Discferret image detected; the mess Discferret decoder will not handle this properly, bailing out!\n");
+		osd_printf_error("dfi_dsk: Old type Discferret image detected; the MAME Discferret decoder will not handle this properly, bailing out!\n");
 		return false;
 	}
 
@@ -88,11 +93,11 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	[[maybe_unused]] int rpm=360; // drive rpm
 	while(pos < size) {
 		uint8_t h[10];
-		io.read_at(pos, h, 10, actual);
-		uint16_t track = (h[0] << 8) | h[1];
-		uint16_t head  = (h[2] << 8) | h[3];
+		std::tie(err, actual) = read_at(io, pos, h, 10); // FIXME: check for errors and premature EOF
+		uint16_t track = get_u16be(&h[0]);
+		uint16_t head  = get_u16be(&h[2]);
 		// Ignore sector
-		uint32_t tsize = (h[6] << 24) | (h[7] << 16) | (h[8] << 8) | h[9];
+		uint32_t tsize = get_u32be(&h[6]);
 
 		// if the position-so-far-in-file plus 10 (for the header) plus track size
 		// is larger than the size of the file, free buffers and bail out
@@ -104,7 +109,7 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 		data.resize(tsize);
 
 		pos += 10; // skip the header, we already read it
-		io.read_at(pos, &data[0], tsize, actual);
+		std::tie(err, actual) = read_at(io, pos, &data[0], tsize); // FIXME: check for errors and premature EOF
 		pos += tsize; // for next time we read, increment to the beginning of next header
 
 		int index_time = 0; // what point the last index happened
@@ -164,7 +169,7 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 		if(!index_time)
 			index_time = total_time;
 
-		std::vector<uint32_t> &buf = image->get_buffer(track, head);
+		std::vector<uint32_t> &buf = image.get_buffer(track, head);
 		buf.resize(tsize);
 
 		int cur_time = 0;
@@ -177,9 +182,7 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 #endif
 		index_count = 0;
 		//index_polarity = 0;
-		uint32_t mg = floppy_image::MG_A;
 		int tpos = 0;
-		buf[tpos++] = mg;
 		for(int i=0; i<tsize; i++) {
 			uint8_t v = data[i];
 			if((v & 0x7f) == 0x7f) // 0x7F : no transition, but a carry (FF is a board-on-fire error and is checked for above)
@@ -202,23 +205,19 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 				//if (trans_time <= MIN_THRESH) osd_printf_verbose("dfi_dsk: Throwing out short transition of length %d\n", trans_time);
 				// the normal case: write the transition at the appropriate time
 				if ((prev_time == 0) || ((trans_time > MIN_THRESH) && (trans_time <= MAX_THRESH))) {
-					mg = mg == floppy_image::MG_A ? floppy_image::MG_B : floppy_image::MG_A;
-					buf[tpos++] = mg | uint32_t((200000000ULL*cur_time)/index_time);
+					buf[tpos++] = floppy_image::MG_F | uint32_t((200000000ULL*cur_time)/index_time);
 					prev_time = cur_time;
 				}
 				// the long case: we probably missed a transition, stuff an extra guessed one in there to see if it helps
 				if (trans_time > MAX_THRESH) {
-					mg = mg == floppy_image::MG_A ? floppy_image::MG_B : floppy_image::MG_A;
 					if (((track%2)==0)&&(head==0)) osd_printf_info("dfi_dsk: missed transition, total time for transition is %d\n",trans_time);
 #ifndef FAKETRANS_ONE
-					buf[tpos++] = mg | uint32_t((200000000ULL*(cur_time-(trans_time/2)))/index_time); // generate imaginary transition at half period
+					buf[tpos++] = floppy_image::MG_F | uint32_t((200000000ULL*(cur_time-(trans_time/2)))/index_time); // generate imaginary transition at half period
 #else
-					buf[tpos++] = mg | uint32_t((200000000ULL*(cur_time-((trans_time*2)/3)))/index_time);
-					mg = mg == floppy_image::MG_A ? floppy_image::MG_B : floppy_image::MG_A;
-					buf[tpos++] = mg | uint32_t((200000000ULL*(cur_time-(trans_time/3)))/index_time);
+					buf[tpos++] = floppy_image::MG_F | uint32_t((200000000ULL*(cur_time-((trans_time*2)/3)))/index_time);
+					buf[tpos++] = floppy_image::MG_F | uint32_t((200000000ULL*(cur_time-(trans_time/3)))/index_time);
 #endif
-					mg = mg == floppy_image::MG_A ? floppy_image::MG_B : floppy_image::MG_A;
-					buf[tpos++] = mg | uint32_t(200000000ULL*cur_time/index_time); // generate transition now
+					buf[tpos++] = floppy_image::MG_F | uint32_t(200000000ULL*cur_time/index_time); // generate transition now
 					prev_time = cur_time;
 				}
 			}
@@ -239,4 +238,4 @@ bool dfi_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	return true;
 }
 
-const floppy_format_type FLOPPY_DFI_FORMAT = &floppy_image_format_creator<dfi_format>;
+const dfi_format FLOPPY_DFI_FORMAT;

@@ -19,15 +19,15 @@ class itt3030_format : public wd177x_format
 public:
 	itt3030_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
 };
 
 
-extern const floppy_format_type FLOPPY_ITT3030_FORMAT;
+extern const itt3030_format FLOPPY_ITT3030_FORMAT;
 
 #endif // MAME_FORMATS_ITT3030_DSK_H

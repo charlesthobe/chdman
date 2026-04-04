@@ -20,14 +20,14 @@ class rc759_format : public wd177x_format
 public:
 	rc759_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
 };
 
-extern const floppy_format_type FLOPPY_RC759_FORMAT;
+extern const rc759_format FLOPPY_RC759_FORMAT;
 
 #endif // MAME_FORMATS_RC759_DSK_H

@@ -41,7 +41,8 @@ enum expression_space
 	EXPSPACE_OPCODE_PHYSICAL,
 	EXPSPACE_PRGDIRECT,
 	EXPSPACE_OPDIRECT,
-	EXPSPACE_REGION
+	EXPSPACE_REGION,
+	EXPSPACE_SHARE
 };
 
 
@@ -86,17 +87,19 @@ public:
 	};
 
 	// construction/destruction
-	expression_error(error_code code, int offset = 0, int num = 0)
-		: m_code(code),
-			m_offset(offset),
-			m_num(num) { }
+	constexpr expression_error(error_code code, int offset = 0, int num = 0)
+		: m_code(code)
+		, m_offset(offset)
+		, m_num(num)
+	{
+	}
 
 	// operators
-	operator error_code() const { return m_code; }
+	constexpr operator error_code() const { return m_code; }
 
 	// getters
-	error_code code() const { return m_code; }
-	int offset() const { return m_offset; }
+	constexpr error_code code() const { return m_code; }
+	constexpr int offset() const { return m_offset; }
 	std::string code_string() const;
 
 private:
@@ -169,21 +172,32 @@ public:
 		READ_WRITE
 	};
 
+	// Identifies the type of symbols stored in this table.  These help symlist create
+	// useful output
+	enum table_type
+	{
+		CPU_STATE,         // CPU registers, etc.
+		BUILTIN_GLOBALS,   // Built-in MAME global symbols (e.g., beamx, beamy, frame, etc.)
+						   // (also used for tables outside debugger: lua scripts, cheat engine)
+	};
+
 	// construction/destruction
-	symbol_table(running_machine &machine, symbol_table *parent = nullptr, device_t *device = nullptr);
+	symbol_table(running_machine &machine, table_type type, symbol_table *parent = nullptr, device_t *device = nullptr);
 
 	// getters
 	const std::unordered_map<std::string, std::unique_ptr<symbol_entry>> &entries() const { return m_symlist; }
+	table_type type() const { return m_type; }
 	symbol_table *parent() const { return m_parent; }
+	running_machine &machine() { return m_machine; }
 
 	// setters
 	void set_memory_modified_func(memory_modified_func modified);
 
 	// symbol access
-	void add(const char *name, read_write rw, u64 *ptr = nullptr);
-	void add(const char *name, u64 constvalue);
-	void add(const char *name, getter_func getter, setter_func setter = nullptr, const std::string &format_string = "");
-	void add(const char *name, int minparams, int maxparams, execute_func execute);
+	symbol_entry &add(const char *name, read_write rw, u64 *ptr = nullptr);
+	symbol_entry &add(const char *name, u64 constvalue);
+	symbol_entry &add(const char *name, getter_func getter, setter_func setter = nullptr, const std::string &format_string = "");
+	symbol_entry &add(const char *name, int minparams, int maxparams, execute_func execute);
 	symbol_entry *find(const char *name) const { if (name) { auto search = m_symlist.find(name); if (search != m_symlist.end()) return search->second.get(); else return nullptr; } else return nullptr; }
 	symbol_entry *find_deep(const char *name);
 
@@ -202,13 +216,18 @@ private:
 	// memory helpers
 	u64 read_program_direct(address_space &space, int opcode, offs_t address, int size);
 	u64 read_memory_region(const char *rgntag, offs_t address, int size);
+	u64 read_memory_share(const char *shatag, offs_t address, int size);
+	template <typename T> u64 do_read_memory(T *mem, offs_t address, int size);
 	void write_program_direct(address_space &space, int opcode, offs_t address, int size, u64 data);
 	void write_memory_region(const char *rgntag, offs_t address, int size, u64 data);
+	void write_memory_share(const char *shatag, offs_t address, int size, u64 data);
+	template <typename T> void do_write_memory(T *mem, offs_t address, int size, u64 data);
 	expression_error expression_get_space(const char *tag, int &spacenum, device_memory_interface *&memory);
 	void notify_memory_modified();
 
 	// internal state
 	running_machine &       m_machine;          // reference to the machine
+	table_type              m_type;             // kind of symbols stored in this table
 	symbol_table *          m_parent;           // pointer to the parent symbol table
 	std::unordered_map<std::string,std::unique_ptr<symbol_entry>> m_symlist;        // list of symbols
 	device_memory_interface *const m_memintf;   // pointer to the local memory interface (if any)

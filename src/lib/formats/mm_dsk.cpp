@@ -2,7 +2,7 @@
 // copyright-holders:Olivier Galibert
 /*********************************************************************
 
-    formats/mm_dsk.c
+    formats/mm_dsk.cpp
 
     mm format
 
@@ -14,17 +14,17 @@ mm1_format::mm1_format() : upd765_format(formats)
 {
 }
 
-const char *mm1_format::name() const
+const char *mm1_format::name() const noexcept
 {
 	return "mm1";
 }
 
-const char *mm1_format::description() const
+const char *mm1_format::description() const noexcept
 {
 	return "Nokia MikroMikko 1 disk image";
 }
 
-const char *mm1_format::extensions() const
+const char *mm1_format::extensions() const noexcept
 {
 	return "dsk";
 }
@@ -33,17 +33,17 @@ mm2_format::mm2_format() : upd765_format(formats)
 {
 }
 
-const char *mm2_format::name() const
+const char *mm2_format::name() const noexcept
 {
 	return "mm2";
 }
 
-const char *mm2_format::description() const
+const char *mm2_format::description() const noexcept
 {
 	return "Nokia MikroMikko 2 disk image";
 }
 
-const char *mm2_format::extensions() const
+const char *mm2_format::extensions() const noexcept
 {
 	return "dsk";
 }
@@ -84,5 +84,5 @@ const mm2_format::format mm2_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_MM1_FORMAT = &floppy_image_format_creator<mm1_format>;
-const floppy_format_type FLOPPY_MM2_FORMAT = &floppy_image_format_creator<mm2_format>;
+const mm1_format FLOPPY_MM1_FORMAT;
+const mm2_format FLOPPY_MM2_FORMAT;

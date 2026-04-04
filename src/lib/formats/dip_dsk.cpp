@@ -2,7 +2,7 @@
 // copyright-holders:Fabio Priuli
 /*********************************************************************
 
-    formats/dip_dsk.h
+    formats/dip_dsk.cpp
 
     PC98 DIP disk images
 
@@ -23,34 +23,34 @@ dip_format::dip_format()
 {
 }
 
-const char *dip_format::name() const
+const char *dip_format::name() const noexcept
 {
 	return "dip";
 }
 
-const char *dip_format::description() const
+const char *dip_format::description() const noexcept
 {
 	return "DIP disk image";
 }
 
-const char *dip_format::extensions() const
+const char *dip_format::extensions() const noexcept
 {
 	return "dip";
 }
 
-int dip_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
+int dip_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const
 {
 	uint64_t size;
 	if (io.length(size))
 		return 0;
 
 	if (size == 0x134000 + 0x100)
-		return 100;
+		return FIFID_SIZE;
 
 	return 0;
 }
 
-bool dip_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image)
+bool dip_format::load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const
 {
 	int heads, tracks, spt, bps;
 
@@ -72,8 +72,7 @@ bool dip_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	for (int track = 0; track < tracks; track++)
 		for (int head = 0; head < heads; head++)
 		{
-			size_t actual;
-			io.read_at(0x100 + bps * spt * (track * heads + head), sect_data, bps * spt, actual);
+			/*auto const [err, actual] =*/ read_at(io, 0x100 + bps * spt * (track * heads + head), sect_data, bps * spt); // FIXME: check for errors and premature EOF
 
 			for (int i = 0; i < spt; i++)
 			{
@@ -83,7 +82,8 @@ bool dip_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 				sects[i].size        = ssize;
 				sects[i].actual_size = bps;
 				sects[i].deleted     = false;
-				sects[i].bad_crc     = false;
+				sects[i].bad_data_crc = false;
+				sects[i].bad_addr_crc = false;
 				sects[i].data        = sect_data + i * bps;
 			}
 
@@ -93,9 +93,4 @@ bool dip_format::load(util::random_read &io, uint32_t form_factor, const std::ve
 	return true;
 }
 
-bool dip_format::supports_save() const
-{
-	return false;
-}
-
-const floppy_format_type FLOPPY_DIP_FORMAT = &floppy_image_format_creator<dip_format>;
+const dip_format FLOPPY_DIP_FORMAT;

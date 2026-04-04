@@ -18,15 +18,15 @@ class fl1_format : public wd177x_format {
 public:
 	fl1_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
 private:
 	static const format formats[];
-	virtual int get_image_offset(const format &f, int head, int track) override;
+	virtual int get_image_offset(const format &f, int head, int track) const override;
 };
 
-extern const floppy_format_type FLOPPY_FL1_FORMAT;
+extern const fl1_format FLOPPY_FL1_FORMAT;
 
 #endif // MAME_FORMATS_FL1_DSK_H

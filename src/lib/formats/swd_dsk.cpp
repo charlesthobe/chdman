@@ -2,7 +2,7 @@
 // copyright-holders:MetalliC
 /*********************************************************************
 
-    formats/swd_dsk.c
+    formats/swd_dsk.cpp
 
     Swift Disc disk images
 
@@ -14,22 +14,22 @@ swd_format::swd_format() : wd177x_format(formats)
 {
 }
 
-const char *swd_format::name() const
+const char *swd_format::name() const noexcept
 {
 	return "swd";
 }
 
-const char *swd_format::description() const
+const char *swd_format::description() const noexcept
 {
 	return "SWD floppy disk image";
 }
 
-const char *swd_format::extensions() const
+const char *swd_format::extensions() const noexcept
 {
 	return "swd";
 }
 
-int swd_format::get_image_offset(const format &f, int head, int track)
+int swd_format::get_image_offset(const format &f, int head, int track) const
 {
 	return (f.track_count * head + track) * compute_track_size(f);
 }
@@ -47,4 +47,4 @@ const swd_format::format swd_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_SWD_FORMAT = &floppy_image_format_creator<swd_format>;
+const swd_format FLOPPY_SWD_FORMAT;

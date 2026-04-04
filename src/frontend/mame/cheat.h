@@ -102,7 +102,7 @@ public:
 	bool set_next_state();
 
 	// actions
-	void save(emu_file &cheatfile) const;
+	void save(util::core_file &cheatfile) const;
 
 private:
 	// a single item in a parameter item list
@@ -160,7 +160,7 @@ public:
 
 	// actions
 	void execute(cheat_manager &manager, uint64_t &argindex);
-	void save(emu_file &cheatfile) const;
+	void save(util::core_file &cheatfile) const;
 
 private:
 	// an entry within the script
@@ -177,7 +177,7 @@ private:
 
 		// actions
 		void execute(cheat_manager &manager, uint64_t &argindex);
-		void save(emu_file &cheatfile) const;
+		void save(util::core_file &cheatfile) const;
 
 	private:
 		// an argument for output
@@ -196,7 +196,7 @@ private:
 			int values(uint64_t &argindex, uint64_t *result);
 
 			// actions
-			void save(emu_file &cheatfile) const;
+			void save(util::core_file &cheatfile) const;
 
 		private:
 			// internal state
@@ -267,7 +267,7 @@ public:
 	bool select_default_state();
 	bool select_previous_state();
 	bool select_next_state();
-	void save(emu_file &cheatfile) const;
+	void save(util::core_file &cheatfile) const;
 
 	// UI helpers
 	void menu_text(std::string &description, std::string &state, uint32_t &flags);
@@ -314,7 +314,7 @@ public:
 	std::vector<std::unique_ptr<cheat_entry>> const &entries() const { return m_cheatlist; }
 
 	// setters
-	void set_enable(bool enable);
+	void set_enable(bool enable, bool show);
 
 	// actions
 	void reload();

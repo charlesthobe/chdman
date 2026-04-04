@@ -654,7 +654,7 @@ template <typename T, typename U, typename... V> constexpr T bitswap(T val, U b,
 ///   bit of the input.  Specify bits in the order they should appear in
 ///   the output field, from most significant to least significant.
 /// \return The extracted bits packed into a right-aligned field.
-template <unsigned B, typename T, typename... U> T bitswap(T val, U... b) noexcept
+template <unsigned B, typename T, typename... U> constexpr T bitswap(T val, U... b) noexcept
 {
 	static_assert(sizeof...(b) == B, "wrong number of bits");
 	static_assert((sizeof(std::remove_reference_t<T>) * 8) >= B, "return type too small for result");
@@ -662,6 +662,14 @@ template <unsigned B, typename T, typename... U> T bitswap(T val, U... b) noexce
 }
 
 /// \}
+
+
+// utility function for sign-extending values of arbitrary width
+template <typename T, typename U>
+constexpr std::make_signed_t<T> sext(T value, U width) noexcept
+{
+	return std::make_signed_t<T>(value << (8 * sizeof(value) - width)) >> (8 * sizeof(value) - width);
+}
 
 
 // constexpr absolute value of an integer

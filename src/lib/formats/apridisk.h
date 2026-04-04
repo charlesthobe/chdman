@@ -19,14 +19,12 @@ class apridisk_format : public floppy_image_format_t
 public:
 	apridisk_format();
 
-	virtual const char *name() const override;
-	virtual const char *description() const override;
-	virtual const char *extensions() const override;
+	virtual const char *name() const noexcept override;
+	virtual const char *description() const noexcept override;
+	virtual const char *extensions() const noexcept override;
 
-	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) override;
-	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image *image) override;
-	virtual bool save(util::random_read_write &io, const std::vector<uint32_t> &variants, floppy_image *image) override;
-	virtual bool supports_save() const override;
+	virtual int identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants) const override;
+	virtual bool load(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants, floppy_image &image) const override;
 
 private:
 	static const int APR_HEADER_SIZE = 128;
@@ -51,6 +49,6 @@ private:
 	static const int MAX_SECTORS = 2880;  // enough for a hd disk image
 };
 
-extern const floppy_format_type FLOPPY_APRIDISK_FORMAT;
+extern const apridisk_format FLOPPY_APRIDISK_FORMAT;
 
 #endif // MAME_FORMATS_APRIDISK_H

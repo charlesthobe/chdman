@@ -2,7 +2,7 @@
 // copyright-holders:Olivier Galibert, Robbbert
 /*********************************************************************
 
-    formats/kaypro_dsk.c
+    formats/kaypro_dsk.cpp
 
     Kaypro disk image format
 
@@ -22,17 +22,17 @@ kayproii_format::kayproii_format() : upd765_format(formats)
 {
 }
 
-const char *kayproii_format::name() const
+const char *kayproii_format::name() const noexcept
 {
 	return "kaypro2";
 }
 
-const char *kayproii_format::description() const
+const char *kayproii_format::description() const noexcept
 {
 	return "Kaypro disk image";
 }
 
-const char *kayproii_format::extensions() const
+const char *kayproii_format::extensions() const noexcept
 {
 	return "kay,dsk";
 }
@@ -49,17 +49,17 @@ kaypro2x_format::kaypro2x_format() : upd765_format(formats)
 {
 }
 
-const char *kaypro2x_format::name() const
+const char *kaypro2x_format::name() const noexcept
 {
 	return "kaypro2x";
 }
 
-const char *kaypro2x_format::description() const
+const char *kaypro2x_format::description() const noexcept
 {
 	return "Kaypro disk image";
 }
 
-const char *kaypro2x_format::extensions() const
+const char *kaypro2x_format::extensions() const noexcept
 {
 	return "kay,dsk";
 }
@@ -72,5 +72,5 @@ const kaypro2x_format::format kaypro2x_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_KAYPROII_FORMAT = &floppy_image_format_creator<kayproii_format>;
-const floppy_format_type FLOPPY_KAYPRO2X_FORMAT = &floppy_image_format_creator<kaypro2x_format>;
+const kayproii_format FLOPPY_KAYPROII_FORMAT;
+const kaypro2x_format FLOPPY_KAYPRO2X_FORMAT;

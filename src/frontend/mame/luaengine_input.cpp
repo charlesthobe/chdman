@@ -144,29 +144,50 @@ void lua_engine::initialize_input(sol::table &emu)
 	ioport_manager_type["count_players"] = &ioport_manager::count_players;
 	ioport_manager_type["type_pressed"] = sol::overload(
 			&ioport_manager::type_pressed,
-			[] (ioport_manager &im, ioport_type type) { return im.type_pressed(type, 0); });
+			[] (ioport_manager &im, ioport_type type) { return im.type_pressed(type, 0); },
+			[] (ioport_manager &im, input_type_entry const &type) { return im.type_pressed(type.type(), type.player()); });
 	ioport_manager_type["type_name"] = sol::overload(
 			&ioport_manager::type_name,
 			[] (ioport_manager &im, ioport_type type) { return im.type_name(type, 0); });
 	ioport_manager_type["type_group"] = sol::overload(
 			&ioport_manager::type_group,
 			[] (ioport_manager &im, ioport_type type) { return im.type_group(type, 0); });
-	ioport_manager_type["type_seq"] =
+	ioport_manager_type["type_seq"] = sol::overload(
 			[] (ioport_manager &im, ioport_type type, std::optional<int> player, std::optional<char const *> seq_type_string)
 			{
 				if (!player)
 					player = 0;
 				input_seq_type seq_type = seq_type_string ? s_seq_type_parser(*seq_type_string) : SEQ_TYPE_STANDARD;
 				return im.type_seq(type, *player, seq_type);
-			};
-	ioport_manager_type["set_type_seq"] =
+			},
+			[] (ioport_manager &im, ioport_type type, std::optional<int> player)
+			{
+				if (!player)
+					player = 0;
+				return im.type_seq(type, *player);
+			},
+			[] (ioport_manager &im, input_type_entry const &type, std::optional<char const *> seq_type_string)
+			{
+				input_seq_type seq_type = seq_type_string ? s_seq_type_parser(*seq_type_string) : SEQ_TYPE_STANDARD;
+				return im.type_seq(type.type(), type.player(), seq_type);
+			},
+			[] (ioport_manager &im, input_type_entry const &type)
+			{
+				return im.type_seq(type.type(), type.player());
+			});
+	ioport_manager_type["set_type_seq"] = sol::overload(
 			[] (ioport_manager &im, ioport_type type, std::optional<int> player, std::optional<char const *> seq_type_string, input_seq const &seq)
 			{
 				if (!player)
 					player = 0;
 				input_seq_type seq_type = seq_type_string ? s_seq_type_parser(*seq_type_string) : SEQ_TYPE_STANDARD;
 				im.set_type_seq(type, *player, seq_type, seq);
-			};
+			},
+			[] (ioport_manager &im, input_type_entry const &type, std::optional<char const *> seq_type_string, input_seq const &seq)
+			{
+				input_seq_type seq_type = seq_type_string ? s_seq_type_parser(*seq_type_string) : SEQ_TYPE_STANDARD;
+				im.set_type_seq(type.type(), type.player(), seq_type, seq);
+			});
 	ioport_manager_type["token_to_input_type"] =
 			[] (ioport_manager &im, std::string const &string)
 			{
@@ -177,6 +198,7 @@ void lua_engine::initialize_input(sol::table &emu)
 	ioport_manager_type["input_type_to_token"] = sol::overload(
 				&ioport_manager::input_type_to_token,
 				[] (ioport_manager &im, ioport_type type) { return im.input_type_to_token(type, 0); });
+	ioport_manager_type["types"] = sol::property(&ioport_manager::types);
 	ioport_manager_type["ports"] = sol::property([] (ioport_manager &im) { return tag_object_ptr_map<ioport_list>(im.ports()); });
 
 
@@ -186,7 +208,6 @@ void lua_engine::initialize_input(sol::table &emu)
 	natkeyboard_type["paste"] = &natural_keyboard::paste;
 	natkeyboard_type["dump"] = static_cast<std::string (natural_keyboard::*)() const>(&natural_keyboard::dump);
 	natkeyboard_type["empty"] = sol::property(&natural_keyboard::empty);
-	natkeyboard_type["full"] = sol::property(&natural_keyboard::full);
 	natkeyboard_type["can_post"] = sol::property(&natural_keyboard::can_post);
 	natkeyboard_type["is_posting"] = sol::property(&natural_keyboard::is_posting);
 	natkeyboard_type["in_use"] = sol::property(&natural_keyboard::in_use, &natural_keyboard::set_in_use);
@@ -244,66 +265,238 @@ void lua_engine::initialize_input(sol::table &emu)
 
 
 	auto ioport_field_type = sol().registry().new_usertype<ioport_field>("ioport_field", sol::no_constructor);
-	ioport_field_type["set_value"] = &ioport_field::set_value;
-	ioport_field_type["set_input_seq"] =
-		[] (ioport_field &f, std::string const &seq_type_string, const input_seq &seq)
-		{
-			input_seq_type seq_type = s_seq_type_parser(seq_type_string);
-			ioport_field::user_settings settings;
-			f.get_user_settings(settings);
-			settings.seq[seq_type] = seq;
-			if (seq.is_default())
-				settings.cfg[seq_type].clear();
-			else if (!seq.length())
-				settings.cfg[seq_type] = "NONE";
-			else
-				settings.cfg[seq_type] = f.port().device().machine().input().seq_to_tokens(seq);
-			f.set_user_settings(settings);
-		};
-	ioport_field_type["input_seq"] =
-		[] (ioport_field &f, std::string const &seq_type_string)
-		{
-			input_seq_type seq_type = s_seq_type_parser(seq_type_string);
-			return f.seq(seq_type);
-		};
-	ioport_field_type["set_default_input_seq"] =
-		[] (ioport_field &f, std::string const &seq_type_string, input_seq const &seq)
-		{
-			input_seq_type seq_type = s_seq_type_parser(seq_type_string);
-			f.set_defseq(seq_type, seq);
-		};
-	ioport_field_type["default_input_seq"] =
-		[] (ioport_field &f, const std::string &seq_type_string)
-		{
-			input_seq_type seq_type = s_seq_type_parser(seq_type_string);
-			return f.defseq(seq_type);
-		};
-	ioport_field_type["keyboard_codes"] =
-		[this] (ioport_field &f, int which)
-		{
-			sol::table result = sol().create_table();
-			int index = 1;
-			for (char32_t code : f.keyboard_codes(which))
-				result[index++] = code;
-			return result;
-		};
+	ioport_field_type.set_function("set_value", &ioport_field::set_value);
+	ioport_field_type.set_function("clear_value", &ioport_field::clear_value);
+	ioport_field_type.set_function(
+			"set_sensitivity",
+			[] (sol::this_state s, ioport_field &f, s32 val)
+			{
+				if (!f.is_analog())
+					luaL_error(s, "set_sensitivity is only applicable to analog fields");
+				ioport_field::user_settings settings;
+				f.get_user_settings(settings);
+				settings.sensitivity = val;
+				f.set_user_settings(settings);
+			});
+	ioport_field_type.set_function(
+			"set_keydelta",
+			[] (sol::this_state s, ioport_field &f, s32 val)
+			{
+				if (!f.is_analog())
+					luaL_error(s, "set_keydelta is only applicable to analog fields");
+				ioport_field::user_settings settings;
+				f.get_user_settings(settings);
+				settings.delta = val;
+				f.set_user_settings(settings);
+			});
+	ioport_field_type.set_function(
+			"set_centerdelta",
+			[] (sol::this_state s, ioport_field &f, s32 val)
+			{
+				if (!f.is_analog())
+					luaL_error(s, "set_centerdelta is only applicable to analog fields");
+				switch (f.type())
+				{
+				case IPT_POSITIONAL:
+				case IPT_POSITIONAL_V:
+					if (f.analog_wraps())
+						luaL_error(s, "set_centerdelta is not applicable to wrapping fields");
+					break;
+
+				case IPT_AD_STICK_X:
+				case IPT_AD_STICK_Y:
+				case IPT_AD_STICK_Z:
+				case IPT_PADDLE:
+				case IPT_PADDLE_V:
+				case IPT_PEDAL:
+				case IPT_PEDAL2:
+				case IPT_PEDAL3:
+					break;
+
+				default:
+					luaL_error(s, "set_centerdelta is not applicable to this field type");
+				}
+				ioport_field::user_settings settings;
+				f.get_user_settings(settings);
+				settings.centerdelta = val;
+				f.set_user_settings(settings);
+			});
+	ioport_field_type.set_function(
+			"set_analog_reverse",
+			[] (sol::this_state s, ioport_field &f, bool val)
+			{
+				if (!f.is_analog())
+					luaL_error(s, "set_analog_reverse is only applicable to analog fields");
+				ioport_field::user_settings settings;
+				f.get_user_settings(settings);
+				settings.reverse = val;
+				f.set_user_settings(settings);
+			});
+	ioport_field_type.set_function(
+			"set_input_seq",
+			[] (ioport_field &f, std::string const &seq_type_string, const input_seq &seq)
+			{
+				input_seq_type seq_type = s_seq_type_parser(seq_type_string);
+				ioport_field::user_settings settings;
+				f.get_user_settings(settings);
+				settings.seq[seq_type] = seq;
+				if (seq.is_default())
+					settings.cfg[seq_type].clear();
+				else if (!seq.length())
+					settings.cfg[seq_type] = "NONE";
+				else
+					settings.cfg[seq_type] = f.port().device().machine().input().seq_to_tokens(seq);
+				f.set_user_settings(settings);
+			});
+	ioport_field_type.set_function(
+			"input_seq",
+			[] (ioport_field &f, std::string const &seq_type_string)
+			{
+				input_seq_type seq_type = s_seq_type_parser(seq_type_string);
+				return f.seq(seq_type);
+			});
+	ioport_field_type.set_function(
+			"set_default_input_seq",
+			[] (ioport_field &f, std::string const &seq_type_string, input_seq const &seq)
+			{
+				input_seq_type seq_type = s_seq_type_parser(seq_type_string);
+				f.set_defseq(seq_type, seq);
+			});
+	ioport_field_type.set_function(
+			"default_input_seq",
+			[] (ioport_field &f, const std::string &seq_type_string)
+			{
+				input_seq_type seq_type = s_seq_type_parser(seq_type_string);
+				return f.defseq(seq_type);
+			});
+	ioport_field_type.set_function(
+			"keyboard_codes",
+			[this] (ioport_field &f, int which)
+			{
+				sol::table result = sol().create_table();
+				int index = 1;
+				for (char32_t code : f.keyboard_codes(which))
+					result[index++] = code;
+				return result;
+			});
 	ioport_field_type["device"] = sol::property(&ioport_field::device);
 	ioport_field_type["port"] = sol::property(&ioport_field::port);
 	ioport_field_type["live"] = sol::property(&ioport_field::live);
 	ioport_field_type["type"] = sol::property(&ioport_field::type);
 	ioport_field_type["name"] = sol::property(&ioport_field::name);
 	ioport_field_type["default_name"] = sol::property(
-			[] (ioport_field &f)
+			[] (ioport_field const &f)
 			{
 				return f.specific_name() ? f.specific_name() : f.manager().type_name(f.type(), f.player());
 			});
 	ioport_field_type["player"] = sol::property(&ioport_field::player, &ioport_field::set_player);
 	ioport_field_type["mask"] = sol::property(&ioport_field::mask);
 	ioport_field_type["defvalue"] = sol::property(&ioport_field::defvalue);
-	ioport_field_type["sensitivity"] = sol::property(&ioport_field::sensitivity);
+	ioport_field_type["minvalue"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				const bool has_minmax = f.is_analog() || (f.type() == IPT_ADJUSTER);
+				return has_minmax ? std::make_optional(f.minval()) : std::nullopt;
+			});
+	ioport_field_type["maxvalue"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				const bool has_minmax = f.is_analog() || (f.type() == IPT_ADJUSTER);
+				return has_minmax ? std::make_optional(f.maxval()) : std::nullopt;
+			});
+	ioport_field_type["sensitivity"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				analog_field const *const analog = f.live().analog;
+				return analog ? std::make_optional(analog->sensitivity()) : std::nullopt;
+			});
+	ioport_field_type["default_sensitivity"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				return f.is_analog() ? std::make_optional(f.sensitivity()) : std::nullopt;
+			});
+	ioport_field_type["keydelta"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				analog_field const *const analog = f.live().analog;
+				return analog ? std::make_optional(analog->delta()) : std::nullopt;
+			});
+	ioport_field_type["default_keydelta"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				return f.is_analog() ? std::make_optional(f.delta()) : std::nullopt;
+			});
+	ioport_field_type["centerdelta"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				// TODO: this code is duplicated with the UI
+				bool use_autocenter = false;
+				switch (f.type())
+				{
+				case IPT_POSITIONAL:
+				case IPT_POSITIONAL_V:
+					use_autocenter = !f.analog_wraps();
+					break;
+
+				case IPT_AD_STICK_X:
+				case IPT_AD_STICK_Y:
+				case IPT_AD_STICK_Z:
+				case IPT_PADDLE:
+				case IPT_PADDLE_V:
+				case IPT_PEDAL:
+				case IPT_PEDAL2:
+				case IPT_PEDAL3:
+					use_autocenter = true;
+					break;
+
+				default:
+					break;
+				}
+				analog_field const *const analog = f.live().analog;
+				return (analog && use_autocenter) ? std::make_optional(analog->centerdelta()) : std::nullopt;
+			});
+	ioport_field_type["default_centerdelta"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				// TODO: this code is duplicated with the UI
+				bool use_autocenter = false;
+				switch (f.type())
+				{
+				case IPT_POSITIONAL:
+				case IPT_POSITIONAL_V:
+					use_autocenter = !f.analog_wraps();
+					break;
+
+				case IPT_AD_STICK_X:
+				case IPT_AD_STICK_Y:
+				case IPT_AD_STICK_Z:
+				case IPT_PADDLE:
+				case IPT_PADDLE_V:
+				case IPT_PEDAL:
+				case IPT_PEDAL2:
+				case IPT_PEDAL3:
+					use_autocenter = true;
+					break;
+
+				default:
+					break;
+				}
+				return (f.is_analog() && use_autocenter) ? std::make_optional(f.centerdelta()) : std::nullopt;
+			});
+	ioport_field_type["analog_reverse"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				analog_field const *const analog = f.live().analog;
+				return analog ? std::make_optional(analog->reverse()) : std::nullopt;
+			});
+	ioport_field_type["default_analog_reverse"] = sol::property(
+			[] (ioport_field const &f)
+			{
+				return f.is_analog() ? std::make_optional(f.analog_reverse()) : std::nullopt;
+			});
 	ioport_field_type["way"] = sol::property(&ioport_field::way);
 	ioport_field_type["type_class"] = sol::property(
-			[] (ioport_field &f)
+			[] (ioport_field const &f)
 			{
 				switch (f.type_class())
 				{
@@ -319,11 +512,8 @@ void lua_engine::initialize_input(sol::table &emu)
 	ioport_field_type["is_analog"] = sol::property(&ioport_field::is_analog);
 	ioport_field_type["is_digital_joystick"] = sol::property(&ioport_field::is_digital_joystick);
 	ioport_field_type["enabled"] = sol::property(&ioport_field::enabled);
-	ioport_field_type["optional"] = sol::property(&ioport_field::optional);
 	ioport_field_type["cocktail"] = sol::property(&ioport_field::cocktail);
 	ioport_field_type["toggle"] = sol::property(&ioport_field::toggle);
-	ioport_field_type["rotated"] = sol::property(&ioport_field::rotated);
-	ioport_field_type["analog_reverse"] = sol::property(&ioport_field::analog_reverse);
 	ioport_field_type["analog_reset"] = sol::property(&ioport_field::analog_reset);
 	ioport_field_type["analog_wraps"] = sol::property(&ioport_field::analog_wraps);
 	ioport_field_type["analog_invert"] = sol::property(&ioport_field::analog_invert);
@@ -331,7 +521,7 @@ void lua_engine::initialize_input(sol::table &emu)
 	ioport_field_type["crosshair_scale"] = sol::property(&ioport_field::crosshair_scale, &ioport_field::set_crosshair_scale);
 	ioport_field_type["crosshair_offset"] = sol::property(&ioport_field::crosshair_offset, &ioport_field::set_crosshair_offset);
 	ioport_field_type["user_value"] = sol::property(
-			[] (ioport_field &f)
+			[] (ioport_field const &f)
 			{
 				ioport_field::user_settings settings;
 				f.get_user_settings(settings);
@@ -357,6 +547,15 @@ void lua_engine::initialize_input(sol::table &emu)
 
 	auto ioport_field_live_type = sol().registry().new_usertype<ioport_field_live>("ioport_field_live", sol::no_constructor);
 	ioport_field_live_type["name"] = &ioport_field_live::name;
+
+
+	auto input_type_entry_type = sol().registry().new_usertype<input_type_entry>("input_type_entry", sol::no_constructor);
+	input_type_entry_type["type"] = sol::property(&input_type_entry::type);
+	input_type_entry_type["group"] = sol::property(&input_type_entry::group);
+	input_type_entry_type["player"] = sol::property(&input_type_entry::player);
+	input_type_entry_type["token"] = sol::property(&input_type_entry::token);
+	input_type_entry_type["name"] = sol::property(&input_type_entry::name);
+	input_type_entry_type["is_analog"] = sol::property([] (input_type_entry const &type) { return ioport_manager::type_is_analog(type.type()); });
 
 
 	auto input_type = sol().registry().new_usertype<input_manager>("input", sol::no_constructor);
@@ -423,7 +622,7 @@ void lua_engine::initialize_input(sol::table &emu)
 
 	auto input_class_type = sol().registry().new_usertype<input_class>("input_class", sol::no_constructor);
 	input_class_type["name"] = sol::property(&input_class::name);
-	input_class_type["enabled"] = sol::property(&input_class::enabled);
+	input_class_type["enabled"] = sol::property(&input_class::enabled, &input_class::enable);
 	input_class_type["multi"] = sol::property(&input_class::multi);
 	input_class_type["devices"] = sol::property(
 			[this] (input_class &devclass)
@@ -448,7 +647,7 @@ void lua_engine::initialize_input(sol::table &emu)
 			[this] (input_device &dev)
 			{
 				sol::table result = sol().create_table();
-				for (input_item_id id = ITEM_ID_FIRST_VALID; id < dev.maxitem(); id++)
+				for (input_item_id id = ITEM_ID_FIRST_VALID; id <= dev.maxitem(); id++)
 				{
 					input_device_item *item = dev.item(id);
 					if (item)
@@ -466,16 +665,9 @@ void lua_engine::initialize_input(sol::table &emu)
 
 
 	auto uiinput_type = sol().registry().new_usertype<ui_input_manager>("uiinput", sol::no_constructor);
-	uiinput_type["find_mouse"] =
-		[] (ui_input_manager &ui)
-		{
-			int32_t x, y;
-			bool button;
-			render_target *rt = ui.find_mouse(&x, &y, &button);
-			return std::make_tuple(x, y, button, rt);
-		};
-	uiinput_type["pressed"] = &ui_input_manager::pressed;
-	uiinput_type["pressed_repeat"] = &ui_input_manager::pressed_repeat;
+	uiinput_type.set_function("reset", &ui_input_manager::reset);
+	uiinput_type.set_function("pressed", &ui_input_manager::pressed);
+	uiinput_type.set_function("pressed_repeat", &ui_input_manager::pressed_repeat);
 	uiinput_type["presses_enabled"] = sol::property(&ui_input_manager::presses_enabled, &ui_input_manager::set_presses_enabled);
 
 }

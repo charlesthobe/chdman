@@ -28,15 +28,15 @@ class debug_view_memory_source : public debug_view_source
 	friend class debug_view_memory;
 
 public:
-	debug_view_memory_source(std::string &&name, address_space &space);
+	debug_view_memory_source(std::string &&name, device_memory_interface *mintf, int spacenum);
 	debug_view_memory_source(std::string &&name, memory_region &region);
 	debug_view_memory_source(std::string &&name, void *base, int element_size, int num_elements, int num_blocks, int block_stride);
 
-	address_space *space() const { return m_space; }
+	std::pair<device_memory_interface *, int> space() const { return std::make_pair(m_memintf, m_spacenum); }
 
 private:
-	address_space           *m_space;           // address space we reference (if any)
 	device_memory_interface *m_memintf;         // pointer to the memory interface of the device
+	int                     m_spacenum;         // logical space number
 	void *                  m_base;             // pointer to memory base
 	offs_t                  m_blocklength;      // length of each block of memory
 	offs_t                  m_numblocks;        // number of blocks of memory
@@ -127,6 +127,7 @@ private:
 	// memory access
 	bool read(u8 size, offs_t offs, u64 &data);
 	void write(u8 size, offs_t offs, u64 data);
+	bool write_digit(offs_t offs, u8 pos, u8 digit);
 	bool read(u8 size, offs_t offs, extFloat80_t &data);
 	bool read_chunk(offs_t address, int chunknum, u64 &chunkdata);
 	void generate_row(debug_view_char *destmin, debug_view_char *destmax, debug_view_char *destrow, offs_t address);

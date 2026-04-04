@@ -6,90 +6,39 @@
 
     Controls execution of the core MAME system.
 
-****************************************************************************
-
-    Since there has been confusion in the past over the order of
-    initialization and other such things, here it is, all spelled out
-    as of January, 2008:
-
-    main()
-        - does platform-specific init
-        - calls mame_execute() [mame.c]
-
-        mame_execute() [mame.c]
-            - calls mame_validitychecks() [validity.c] to perform validity checks on all compiled drivers
-            - begins resource tracking (level 1)
-            - calls create_machine [mame.c] to initialize the running_machine structure
-            - calls init_machine() [mame.c]
-
-            init_machine() [mame.c]
-                - calls fileio_init() [fileio.c] to initialize file I/O info
-                - calls config_init() [config.c] to initialize configuration system
-                - calls input_init() [input.c] to initialize the input system
-                - calls output_init() [output.c] to initialize the output system
-                - calls state_init() [state.c] to initialize save state system
-                - calls state_save_allow_registration() [state.c] to allow registrations
-                - calls palette_init() [palette.c] to initialize palette system
-                - calls render_init() [render.c] to initialize the rendering system
-                - calls ui_init() [ui.c] to initialize the user interface
-                - calls generic_machine_init() [machine/generic.c] to initialize generic machine structures
-                - calls timer_init() [timer.c] to reset the timer system
-                - calls osd_init() [osdepend.h] to do platform-specific initialization
-                - calls input_port_init() [inptport.c] to set up the input ports
-                - calls rom_init() [romload.c] to load the game's ROMs
-                - calls memory_init() [memory.c] to process the game's memory maps
-                - calls the driver's DRIVER_INIT callback
-                - calls device_list_start() [devintrf.c] to start any devices
-                - calls video_init() [video.c] to start the video system
-                - calls tilemap_init() [tilemap.c] to start the tilemap system
-                - calls crosshair_init() [crsshair.c] to configure the crosshairs
-                - calls sound_init() [sound.c] to start the audio system
-                - calls debugger_init() [debugger.c] to set up the debugger
-                - calls the driver's MACHINE_START, SOUND_START, and VIDEO_START callbacks
-                - calls cheat_init() [cheat.c] to initialize the cheat system
-                - calls image_init() [image.c] to initialize the image system
-
-            - calls config_load_settings() [config.c] to load the configuration file
-            - calls nvram_load [machine/generic.c] to load NVRAM
-            - calls ui_display_startup_screens() [ui.c] to display the startup screens
-            - begins resource tracking (level 2)
-            - calls soft_reset() [mame.c] to reset all systems
-
-                -------------------( at this point, we're up and running )----------------------
-
-            - calls scheduler->timeslice() [schedule.c] over and over until we exit
-            - ends resource tracking (level 2), freeing all auto_mallocs and timers
-            - calls the nvram_save() [machine/generic.c] to save NVRAM
-            - calls config_save_settings() [config.c] to save the game's configuration
-            - calls all registered exit routines [mame.c]
-            - ends resource tracking (level 1), freeing all auto_mallocs and timers
-
-        - exits the program
-
 ***************************************************************************/
 
 #include "emu.h"
-#include "emuopts.h"
-#include "osdepend.h"
+
 #include "config.h"
-#include "debugger.h"
-#include "render.h"
-#include "uiinput.h"
 #include "crsshair.h"
-#include "unzip.h"
-#include "debug/debugvw.h"
 #include "debug/debugcpu.h"
+#include "debug/debugvw.h"
+#include "debugger.h"
 #include "dirtc.h"
+#include "emuopts.h"
+#include "fileio.h"
+#include "http.h"
 #include "image.h"
+#include "main.h"
+#include "natkeyboard.h"
 #include "network.h"
+#include "render.h"
 #include "romload.h"
 #include "tilemap.h"
-#include "natkeyboard.h"
+#include "uiinput.h"
+
 #include "ui/uimain.h"
+
 #include "corestr.h"
-#include <ctime>
+#include "unzip.h"
+
+#include "osdepend.h"
+
 #include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
+
+#include <ctime>
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -111,29 +60,28 @@ osd_interface &running_machine::osd() const
 //-------------------------------------------------
 
 running_machine::running_machine(const machine_config &_config, machine_manager &manager)
-	: m_side_effects_disabled(0),
-		debug_flags(0),
-		m_config(_config),
-		m_system(_config.gamedrv()),
-		m_manager(manager),
-		m_current_phase(machine_phase::PREINIT),
-		m_paused(false),
-		m_hard_reset_pending(false),
-		m_exit_pending(false),
-		m_soft_reset_timer(nullptr),
-		m_rand_seed(0x9d14abd7),
-		m_ui_active(_config.options().ui_active()),
-		m_basename(_config.gamedrv().name),
-		m_sample_rate(_config.options().sample_rate()),
-		m_saveload_schedule(saveload_schedule::NONE),
-		m_saveload_schedule_time(attotime::zero),
-		m_saveload_searchpath(nullptr),
+	: m_side_effects_disabled(0)
+	, debug_flags(0)
+	, m_config(_config)
+	, m_system(_config.gamedrv())
+	, m_manager(manager)
+	, m_current_phase(machine_phase::PREINIT)
+	, m_paused(false)
+	, m_hard_reset_pending(false)
+	, m_exit_pending(false)
+	, m_soft_reset_timer(nullptr)
+	, m_rand_seed(0x9d14abd7)
+	, m_basename(_config.gamedrv().name)
+	, m_sample_rate(_config.options().sample_rate())
+	, m_saveload_schedule(saveload_schedule::NONE)
+	, m_saveload_schedule_time(attotime::zero)
+	, m_saveload_searchpath(nullptr)
 
-		m_save(*this),
-		m_memory(*this),
-		m_ioport(*this),
-		m_parameters(*this),
-		m_scheduler(*this)
+	, m_save(*this)
+	, m_memory(*this)
+	, m_ioport(*this)
+	, m_parameters(*this)
+	, m_scheduler(*this)
 {
 	memset(&m_base_time, 0, sizeof(m_base_time));
 
@@ -171,12 +119,17 @@ std::string running_machine::describe_context() const
 		cpu_device *cpu = dynamic_cast<cpu_device *>(&executing->device());
 		if (cpu != nullptr)
 		{
-			address_space &prg = cpu->space(AS_PROGRAM);
-			return string_format(prg.is_octal() ? "'%s' (%0*o)" :  "'%s' (%0*X)", cpu->tag(), prg.logaddrchars(), cpu->pc());
+			address_space *tspace;
+			offs_t address = cpu->pc();
+			bool ok = cpu->translate(AS_PROGRAM, device_memory_interface::TR_READ, address, tspace);
+			return string_format((ok && tspace->is_octal()) ? "'%s' (%0*o)" :  "'%s' (%0*X)", cpu->tag(), ok ? tspace->logaddrchars() : 1, cpu->pc());
 		}
 	}
 
-	return std::string("(no context)");
+	if (m_current_phase == machine_phase::RESET)
+		return std::string("(reset phase)");
+	else
+		return std::string("(no context)");
 }
 
 
@@ -199,12 +152,13 @@ void running_machine::start()
 	// initialize UI input
 	m_ui_input = std::make_unique<ui_input_manager>(*this);
 
-	// init the osd layer
+	// init the OSD layer
 	m_manager.osd().init(*this);
 
-	// create the video manager
+	// create the video manager and UI manager
 	m_video = std::make_unique<video_manager>(*this);
 	m_ui = manager().create_ui(*this);
+	m_ui->set_startup_text("Initializing...", true);
 
 	// initialize the base time (needed for doing record/playback)
 	::time(&m_base_time);
@@ -260,7 +214,9 @@ void running_machine::start()
 	add_notifier(MACHINE_NOTIFY_RESET, machine_notify_delegate(&running_machine::reset_all_devices, this));
 	add_notifier(MACHINE_NOTIFY_EXIT, machine_notify_delegate(&running_machine::stop_all_devices, this));
 	save().register_presave(save_prepost_delegate(FUNC(running_machine::presave_all_devices), this));
+	m_sound->before_devices_init();
 	start_all_devices();
+	m_sound->after_devices_init();
 	save().register_postload(save_prepost_delegate(FUNC(running_machine::postload_all_devices), this));
 
 	// save outputs created before start time
@@ -280,14 +236,28 @@ void running_machine::start()
 	if (filename[0] != 0 && !m_video->is_recording())
 		m_video->begin_recording(filename, movie_recording::format::AVI);
 
-	// if we're coming in with a savegame request, process it now
 	const char *savegame = options().state();
 	if (savegame[0] != 0)
+	{
+		// if we're coming in with a savegame request, process it now
 		schedule_load(savegame);
-
-	// if we're in autosave mode, schedule a load
-	else if (options().autosave() && (m_system.flags & MACHINE_SUPPORTS_SAVE) != 0)
-		schedule_load("auto");
+	}
+	else if (options().autosave())
+	{
+		// if we're in autosave mode, schedule a load
+		// m_save.supported() won't be set until save state registrations are finalised
+		bool supported = true;
+		for (device_t &device : device_enumerator(root_device()))
+		{
+			if (device.type().emulation_flags() & device_t::flags::SAVE_UNSUPPORTED)
+			{
+				supported = false;
+				break;
+			}
+		}
+		if (supported)
+			schedule_load("auto");
+	}
 
 	manager().update_machine();
 }
@@ -332,14 +302,12 @@ int running_machine::run(bool quiet)
 		// then finish setting up our local machine
 		start();
 
+		// disallow save state registrations starting here
+		m_save.allow_registration(false);
+
 		// load the configuration settings
 		manager().before_load_settings(*this);
 		m_configuration->load_settings();
-
-		// disallow save state registrations starting here.
-		// Don't do it earlier, config load can create network
-		// devices with timers.
-		m_save.allow_registration(false);
 
 		// load the NVRAM
 		nvram_load();
@@ -374,20 +342,21 @@ int running_machine::run(bool quiet)
 		// run the CPUs until a reset or exit
 		while ((!m_hard_reset_pending && !m_exit_pending) || m_saveload_schedule != saveload_schedule::NONE)
 		{
-			g_profiler.start(PROFILER_EXTRA);
+			auto profile = g_profiler.start(PROFILER_EXTRA);
 
 			// execute CPUs if not paused
 			if (!m_paused)
 				m_scheduler.timeslice();
-			// otherwise, just pump video updates through
+			// otherwise, just pump video updates and sound mapping updates through
 			else
+			{
 				m_video->frame_update();
+				sound().mapping_update();
+			}
 
 			// handle save/load
 			if (m_saveload_schedule != saveload_schedule::NONE)
 				handle_saveload();
-
-			g_profiler.stop();
 		}
 		m_manager.http()->clear();
 
@@ -400,29 +369,29 @@ int running_machine::run(bool quiet)
 			nvram_save();
 		m_configuration->save_settings();
 	}
-	catch (emu_fatalerror &fatal)
+	catch (emu_fatalerror const &fatal)
 	{
 		osd_printf_error("Fatal error: %s\n", fatal.what());
 		error = EMU_ERR_FATALERROR;
 		if (fatal.exitcode() != 0)
 			error = fatal.exitcode();
 	}
-	catch (emu_exception &)
+	catch (emu_exception const &)
 	{
 		osd_printf_error("Caught unhandled emulator exception\n");
 		error = EMU_ERR_FATALERROR;
 	}
-	catch (binding_type_exception &btex)
+	catch (binding_type_exception const &btex)
 	{
 		osd_printf_error("Error performing a late bind of function expecting type %s to instance of type %s\n", btex.target_type().name(), btex.actual_type().name());
 		error = EMU_ERR_FATALERROR;
 	}
-	catch (tag_add_exception &aex)
+	catch (tag_add_exception const &aex)
 	{
 		osd_printf_error("Tag '%s' already exists in tagged map\n", aex.tag());
 		error = EMU_ERR_FATALERROR;
 	}
-	catch (std::exception &ex)
+	catch (std::exception const &ex)
 	{
 		osd_printf_error("Caught unhandled %s exception: %s\n", typeid(ex).name(), ex.what());
 		error = EMU_ERR_FATALERROR;
@@ -458,7 +427,7 @@ void running_machine::schedule_exit()
 	m_scheduler.eat_all_cycles();
 
 	// if we're autosaving on exit, schedule a save as well
-	if (options().autosave() && (m_system.flags & MACHINE_SUPPORTS_SAVE) && this->time() > attotime::zero)
+	if (options().autosave() && m_save.supported() && (this->time() > attotime::zero))
 		schedule_save("auto");
 }
 
@@ -497,7 +466,7 @@ void running_machine::schedule_soft_reset()
 //-------------------------------------------------
 //  get_statename - allow to specify a subfolder of
 //  the state directory for state loading/saving,
-//  very useful for MESS and consoles or computers
+//  very useful for consoles or computers
 //  where you can have separate folders for diff
 //  software
 //-------------------------------------------------
@@ -645,10 +614,10 @@ void running_machine::schedule_save(std::string &&filename)
 //  immediate_save - save state.
 //-------------------------------------------------
 
-void running_machine::immediate_save(const char *filename)
+void running_machine::immediate_save(std::string_view filename)
 {
 	// specify the filename to save or load
-	set_saveload_filename(filename);
+	set_saveload_filename(std::string(filename));
 
 	// set up some parameters for handle_saveload()
 	m_saveload_schedule = saveload_schedule::SAVE;
@@ -682,10 +651,10 @@ void running_machine::schedule_load(std::string &&filename)
 //  immediate_load - load state.
 //-------------------------------------------------
 
-void running_machine::immediate_load(const char *filename)
+void running_machine::immediate_load(std::string_view filename)
 {
 	// specify the filename to save or load
-	set_saveload_filename(filename);
+	set_saveload_filename(std::string(filename));
 
 	// set up some parameters for handle_saveload()
 	m_saveload_schedule = saveload_schedule::LOAD;
@@ -913,6 +882,7 @@ void running_machine::handle_saveload()
 	if (!m_saveload_pending_file.empty())
 	{
 		const char *const opname = (m_saveload_schedule == saveload_schedule::LOAD) ? "load" : "save";
+		const char *const preposname = (m_saveload_schedule == saveload_schedule::LOAD) ? "from" : "to";
 
 		// if there are anonymous timers, we can't save just yet, and we can't load yet either
 		// because the timers might overwrite data we have loaded
@@ -920,7 +890,7 @@ void running_machine::handle_saveload()
 		{
 			// if more than a second has passed, we're probably screwed
 			if ((this->time() - m_saveload_schedule_time) > attotime::from_seconds(1))
-				popmessage("Unable to %s due to pending anonymous timers. See error.log for details.", opname);
+				popmessage("Error: Unable to %s state %s %s due to pending anonymous timers. See error.log for details.", opname, preposname, m_saveload_pending_file);
 			else
 				return; // return without cancelling the operation
 		}
@@ -933,39 +903,36 @@ void running_machine::handle_saveload()
 			auto const filerr = file.open(m_saveload_pending_file);
 			if (!filerr)
 			{
-				const char *const opnamed = (m_saveload_schedule == saveload_schedule::LOAD) ? "loaded" : "saved";
-
 				// read/write the save state
 				save_error saverr = (m_saveload_schedule == saveload_schedule::LOAD) ? m_save.read_file(file) : m_save.write_file(file);
 
 				// handle the result
 				switch (saverr)
 				{
-				case STATERR_ILLEGAL_REGISTRATIONS:
-					popmessage("Error: Unable to %s state due to illegal registrations. See error.log for details.", opname);
-					break;
-
 				case STATERR_INVALID_HEADER:
-					popmessage("Error: Unable to %s state due to an invalid header. Make sure the save state is correct for this machine.", opname);
+					popmessage("Error: Unable to %s state %s %s due to an invalid header. Make sure the save state is correct for this system.", opname, preposname, m_saveload_pending_file);
 					break;
 
 				case STATERR_READ_ERROR:
-					popmessage("Error: Unable to %s state due to a read error (file is likely corrupt).", opname);
+					popmessage("Error: Unable to %s state %s %s due to a read error (file is likely corrupt).", opname, preposname, m_saveload_pending_file);
 					break;
 
 				case STATERR_WRITE_ERROR:
-					popmessage("Error: Unable to %s state due to a write error. Verify there is enough disk space.", opname);
+					popmessage("Error: Unable to %s state %s %s due to a write error. Verify there is enough disk space.", opname, preposname, m_saveload_pending_file);
 					break;
 
 				case STATERR_NONE:
-					if (!(m_system.flags & MACHINE_SUPPORTS_SAVE))
-						popmessage("State successfully %s.\nWarning: Save states are not officially supported for this machine.", opnamed);
+				{
+					const char *const opnamed = (m_saveload_schedule == saveload_schedule::LOAD) ? "Loaded" : "Saved";
+					if (!m_save.supported())
+						popmessage("%s state %s %s.\nWarning: Save states are not officially supported for this system.", opnamed, preposname, m_saveload_pending_file);
 					else
-						popmessage("State successfully %s.", opnamed);
+						popmessage("%s state %s %s.", opnamed, preposname, m_saveload_pending_file);
 					break;
+				}
 
 				default:
-					popmessage("Error: Unknown error during state %s.", opnamed);
+					popmessage("Error: Unknown error during %s state %s %s.", opname, preposname, m_saveload_pending_file);
 					break;
 				}
 
@@ -976,11 +943,11 @@ void running_machine::handle_saveload()
 			else if ((openflags == OPEN_FLAG_READ) && (std::errc::no_such_file_or_directory == filerr))
 			{
 				// attempt to load a non-existent savestate, report empty slot
-				popmessage("Error: No savestate file to load.", opname);
+				popmessage("Error: Load state file %s not found.", m_saveload_pending_file);
 			}
 			else
 			{
-				popmessage("Error: Failed to open file for %s operation.", opname);
+				popmessage("Error: Failed to open %s for %s state operation.", m_saveload_pending_file, opname);
 			}
 		}
 	}
@@ -997,7 +964,7 @@ void running_machine::handle_saveload()
 //  of the system
 //-------------------------------------------------
 
-void running_machine::soft_reset(void *ptr, s32 param)
+void running_machine::soft_reset(s32 param)
 {
 	logerror("Soft reset\n");
 
@@ -1024,6 +991,17 @@ void running_machine::logfile_callback(const char *buffer)
 		m_logfile->puts(buffer);
 		m_logfile->flush();
 	}
+}
+
+
+//-------------------------------------------------
+//  steal_debuglogfile - relinquish ownership of
+//  the debug.log file
+//-------------------------------------------------
+
+std::unique_ptr<emu_file> running_machine::steal_debuglogfile()
+{
+	return std::move(m_debuglogfile);
 }
 
 
@@ -1174,9 +1152,10 @@ void running_machine::nvram_load()
 	for (device_nvram_interface &nvram : nvram_interface_enumerator(root_device()))
 	{
 		emu_file file(options().nvram_directory(), OPEN_FLAG_READ);
-		if (!file.open(nvram_filename(nvram.device())))
+		if (nvram.nvram_backup_enabled() && !file.open(nvram_filename(nvram.device())))
 		{
-			nvram.nvram_load(file);
+			if (!nvram.nvram_load(file))
+				osd_printf_error("Error reading NVRAM file %s\n", file.filename());
 			file.close();
 		}
 		else
@@ -1198,7 +1177,17 @@ void running_machine::nvram_save()
 			emu_file file(options().nvram_directory(), OPEN_FLAG_WRITE | OPEN_FLAG_CREATE | OPEN_FLAG_CREATE_PATHS);
 			if (!file.open(nvram_filename(nvram.device())))
 			{
-				nvram.nvram_save(file);
+				bool error = false;
+
+				if (!nvram.nvram_save(file))
+				{
+					error = true;
+					osd_printf_error("Error writing NVRAM file %s\n", file.filename());
+				}
+
+				// close and perhaps delete the file
+				if (error || file.size() == 0)
+					file.remove_on_close();
 				file.close();
 			}
 		}
@@ -1215,7 +1204,7 @@ void running_machine::popup_clear() const
 	ui().popup_time(0, " ");
 }
 
-void running_machine::popup_message(util::format_argument_pack<std::ostream> const &args) const
+void running_machine::popup_message(util::format_argument_pack<char> const &args) const
 {
 	std::string const temp(string_format(args));
 	ui().popup_time(temp.length() / 40 + 2, "%s", temp);
@@ -1337,7 +1326,7 @@ void running_machine::emscripten_main_loop()
 {
 	running_machine *machine = emscripten_running_machine;
 
-	g_profiler.start(PROFILER_EXTRA);
+	auto profile = g_profiler.start(PROFILER_EXTRA);
 
 	// execute CPUs if not paused
 	if (!machine->m_paused)
@@ -1370,8 +1359,6 @@ void running_machine::emscripten_main_loop()
 	{
 		emscripten_cancel_main_loop();
 	}
-
-	g_profiler.stop();
 }
 
 void running_machine::emscripten_set_running_machine(running_machine *machine)

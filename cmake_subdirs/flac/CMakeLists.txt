@@ -1,5 +1,5 @@
-#libflac
-set(flac_dir ${CMAKE_SOURCE_DIR}/3rdparty/libflac)
+#flac
+set(flac_dir ${CMAKE_SOURCE_DIR}/3rdparty/flac)
 
 add_compile_definitions(
     WORDS_BIGENDIAN=0
@@ -8,6 +8,9 @@ add_compile_definitions(
     _FILE_OFFSET_BITS=64
     FLAC__HAS_OGG=0
     HAVE_CONFIG_H=1
+    HAVE_LROUND=1
+    HAVE_STDINT_H=1
+    FLAC__NO_DLL=1
 )
 
 if(${CMAKE_GENERATOR} STREQUAL "Unix Makefiles" OR ${CMAKE_GENERATOR} STREQUAL "Ninja")
@@ -33,14 +36,31 @@ add_library(flac STATIC
     ${flac_dir}/src/libFLAC/bitwriter.c
     ${flac_dir}/src/libFLAC/cpu.c
     ${flac_dir}/src/libFLAC/crc.c
+    ${flac_dir}/src/libFLAC/fixed_intrin_avx2.c
+    ${flac_dir}/src/libFLAC/fixed_intrin_sse2.c
+    ${flac_dir}/src/libFLAC/fixed_intrin_sse42.c
+    ${flac_dir}/src/libFLAC/fixed_intrin_ssse3.c
     ${flac_dir}/src/libFLAC/fixed.c
     ${flac_dir}/src/libFLAC/float.c
     ${flac_dir}/src/libFLAC/format.c
+    ${flac_dir}/src/libFLAC/lpc_intrin_avx2.c
+    ${flac_dir}/src/libFLAC/lpc_intrin_fma.c
+    ${flac_dir}/src/libFLAC/lpc_intrin_neon.c
+    ${flac_dir}/src/libFLAC/lpc_intrin_sse2.c
+    ${flac_dir}/src/libFLAC/lpc_intrin_sse41.c
     ${flac_dir}/src/libFLAC/lpc.c
     ${flac_dir}/src/libFLAC/md5.c
     ${flac_dir}/src/libFLAC/memory.c
+    ${flac_dir}/src/libFLAC/metadata_iterators.c
+    ${flac_dir}/src/libFLAC/metadata_object.c
     ${flac_dir}/src/libFLAC/stream_decoder.c
-    ${flac_dir}/src/libFLAC/stream_encoder.c
     ${flac_dir}/src/libFLAC/stream_encoder_framing.c
+    ${flac_dir}/src/libFLAC/stream_encoder_intrin_avx2.c
+    ${flac_dir}/src/libFLAC/stream_encoder_intrin_sse2.c
+    ${flac_dir}/src/libFLAC/stream_encoder_intrin_ssse3.c
+    ${flac_dir}/src/libFLAC/stream_encoder.c
+    ${flac_dir}/src/libFLAC/version.rc
     ${flac_dir}/src/libFLAC/window.c
+    $<$<BOOL:${WIN32}>:${flac_dir}/include/share/win_utf8_io.h>
+    $<$<BOOL:${WIN32}>:${flac_dir}/src/share/win_utf8_io/win_utf8_io.c>
 )

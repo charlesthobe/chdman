@@ -2,7 +2,7 @@
 // copyright-holders:Nathan Woods
 /*********************************************************************
 
-    formats/pc_dsk.c
+    formats/pc_dsk.cpp
 
     PC disk images
 
@@ -19,44 +19,19 @@ pc_format::pc_format() : upd765_format(formats)
 {
 }
 
-const char *pc_format::name() const
+const char *pc_format::name() const noexcept
 {
 	return "pc";
 }
 
-const char *pc_format::description() const
+const char *pc_format::description() const noexcept
 {
 	return "PC floppy disk image";
 }
 
-const char *pc_format::extensions() const
+const char *pc_format::extensions() const noexcept
 {
 	return "dsk,ima,img,ufi,360";
-}
-
-int pc_format::identify(util::random_read &io, uint32_t form_factor, const std::vector<uint32_t> &variants)
-{
-	uint64_t size;
-	if (io.length(size)) {
-		return 0;
-	}
-
-	/* some 360K images have a 512-byte header */
-	if (size == 368640 + 0x200) {
-		file_header_skip_bytes = 0x200;
-	}
-
-	/* Disk Copy 4.2 images have an 84-byte header */
-	if (size == 1474560 + 84) {
-		file_header_skip_bytes = 84;
-	}
-
-	/* some 1.44MB images have a 1024-byte footer */
-	if (size == 1474560 + 0x400) {
-		file_footer_skip_bytes = 0x400;
-	}
-
-	return upd765_format::identify(io, form_factor, variants);
 }
 
 const pc_format::format pc_format::formats[] = {
@@ -119,4 +94,4 @@ const pc_format::format pc_format::formats[] = {
 	{}
 };
 
-const floppy_format_type FLOPPY_PC_FORMAT = &floppy_image_format_creator<pc_format>;
+const pc_format FLOPPY_PC_FORMAT;

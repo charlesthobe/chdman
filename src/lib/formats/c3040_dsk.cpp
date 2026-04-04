@@ -2,9 +2,9 @@
 // copyright-holders:Curt Coder
 /*********************************************************************
 
-    formats/c3040_dsk.c
+    formats/c3040_dsk.cpp
 
-    Commodore 3040 sector disk image format
+    Commodore 2040/3040 sector disk image format
 
 *********************************************************************/
 
@@ -14,17 +14,17 @@ c3040_format::c3040_format() : d64_format(file_formats)
 {
 }
 
-const char *c3040_format::name() const
+const char *c3040_format::name() const noexcept
 {
 	return "c3040";
 }
 
-const char *c3040_format::description() const
+const char *c3040_format::description() const noexcept
 {
 	return "Commodore 3040 disk image";
 }
 
-const char *c3040_format::extensions() const
+const char *c3040_format::extensions() const noexcept
 {
 	return "d67";
 }
@@ -54,7 +54,7 @@ const int c3040_format::c3040_gap2[] =
 	12, 12, 12, 12, 12                                                  // 31-35
 };
 
-floppy_image_format_t::desc_e* c3040_format::get_sector_desc(const format &f, int &current_size, int sector_count, uint8_t id1, uint8_t id2, int gap_2)
+floppy_image_format_t::desc_e* c3040_format::get_sector_desc(const format &f, int &current_size, int sector_count, uint8_t id1, uint8_t id2, int gap_2) const
 {
 	static floppy_image_format_t::desc_e desc[] = {
 		/* 00 */ { SECTOR_LOOP_START, 0, -1 },
@@ -89,11 +89,11 @@ floppy_image_format_t::desc_e* c3040_format::get_sector_desc(const format &f, in
 	return desc;
 }
 
-void c3040_format::fix_end_gap(floppy_image_format_t::desc_e* desc, int remaining_size)
+void c3040_format::fix_end_gap(floppy_image_format_t::desc_e* desc, int remaining_size) const
 {
 	desc[19].p2 = remaining_size / 10;
 	desc[20].p2 = remaining_size % 10;
 	desc[20].p1 >>= remaining_size & 0x01;
 }
 
-const floppy_format_type FLOPPY_C3040_FORMAT = &floppy_image_format_creator<c3040_format>;
+const c3040_format FLOPPY_C3040_FORMAT;
